@@ -1,63 +1,137 @@
-# KeyHunt-Cuda 
-_Hunt for Bitcoin private keys._
+#!/bin/bash
 
-This is a modified version of VanitySearch by [JeanLucPons](https://github.com/JeanLucPons/VanitySearch/).
+# Stellt sicher, dass das Skript bei einem Fehler sofort beendet wird.
+set -e
 
-Renamed from VanitySearch to KeyHunt (inspired from [keyhunt](https://github.com/albertobsd/keyhunt) by albertobsd).
+# --- ABHÄNGIGKEITEN PRÜFEN ---
+echo -e "--- Überprüfe und installiere Abhängigkeiten ---"
+install_package() {
+    PACKAGE=$1
+    if ! dpkg -s $PACKAGE >/dev/null 2>&1; then
+        echo "Installiere $PACKAGE..."
+        apt-get install -y $PACKAGE
+    else
+        echo "$PACKAGE ist bereits installiert."
+    fi
+}
+apt-get update
+install_package build-essential
+install_package wget
+install_package gzip
+install_package libgmp-dev
+install_package python3
+install_package python3-pip
+install_package python3-venv
 
-A lot of gratitude to all the developers whose codes has been used here.
+# Prüfe auf nvidia-smi
+command -v nvidia-smi >/dev/null 2>&1 || { echo >&2 "Fehler: 'nvidia-smi' wurde nicht gefunden. Bitte stellen Sie sicher, dass die NVIDIA-Treiber korrekt installiert sind."; exit 1; }
+echo "Alle System-Abhängigkeiten sind vorhanden."
 
-## Features
-- For Bitcoin use ```--coin BTC``` and for Ethereum use ```--coin ETH```
-- Single address(rmd160 hash) for BTC or ETH address searching with mode ```-m ADDREES```
-- Multiple addresses(rmd160 hashes) or ETH addresses searching with mode ```-m ADDREESES```
-- XPoint[s] mode is applicable for ```--coin BTC``` only
-- Single xpoint searching with mode ```-m XPOINT```
-- Multiple xpoint searching with mode ```-m XPOINTS```
-- For XPoint[s] mode use x point of the public key, without 02 or 03 prefix(64 chars).
-- Cuda only.
 
-## Updates for RTX 30XX and 40XX Support
+# --- HARDWARE AUTOMATISCH ERKENNEN ---
+echo -e "\n--- Erkenne Hardware automatisch ---"
+GPU_COUNT=$(nvidia-smi --query-gpu=count --format=csv,noheader)
+COMPUTE_CAP=$(nvidia-smi -i 0 --query-gpu=compute_cap --format=csv,noheader) # Liest CCAP von der ersten GPU
+CCAP=$(echo $COMPUTE_CAP | tr -d '.')
 
-This version has been updated to support:
-- RTX 30XX series GPUs (compute capability 8.6)
-- RTX 40XX series GPUs (compute capability 8.9)
-- CUDA 12.X compatibility
+echo "Erkannt: ${GPU_COUNT} NVIDIA GPU(s)"
+echo "Erkannt: Compute Capability ${COMPUTE_CAP} (wird als CCAP=${CCAP} für die Kompilierung verwendet)"
 
-### Windows Build
-- Updated project files for CUDA 12.0
-- Added support for compute capabilities 8.0, 8.6, and 8.9
-- Updated platform toolset to v143 (Visual Studio 2022)
 
-### Linux Build
-- Updated Makefile for CUDA 12.X compatibility
-- Added support for compute capabilities 8.0, 8.6, and 8.9
-- Made CUDA path more flexible
+# --- AUSWAHL DES BIT-BEREICHS ---
+echo -e "\n--- Konfiguration des Suchbereichs ---"
+select_bit() {
+    local PROMPT_MESSAGE=$1
+    local SELECTED_BIT
+    PS3="$PROMPT_MESSAGE"
+    options=("Bit 1-32" "Bit 33-64" "Bit 65-96" "Bit 97-128" "Bit 129-160" "Bit 161-192" "Bit 193-224" "Bit 225-256" "Manuelle Eingabe")
+    select opt in "${options[@]}"; do
+        case $opt in
+            "Bit 1-32") read -p "Geben Sie eine Bit-Zahl zwischen 1 und 32 ein: " SELECTED_BIT; break;;
+            "Bit 33-64") read -p "Geben Sie eine Bit-Zahl zwischen 33 und 64 ein: " SELECTED_BIT; break;;
+            "Bit 65-96") read -p "Geben Sie eine Bit-Zahl zwischen 65 und 96 ein: " SELECTED_BIT; break;;
+            "Bit 97-128") read -p "Geben Sie eine Bit-Zahl zwischen 97 und 128 ein: " SELECTED_BIT; break;;
+            "Bit 129-160") read -p "Geben Sie eine Bit-Zahl zwischen 129 und 160 ein: " SELECTED_BIT; break;;
+            "Bit 161-192") read -p "Geben Sie eine Bit-Zahl zwischen 161 und 192 ein: " SELECTED_BIT; break;;
+            "Bit 193-224") read -p "Geben Sie eine Bit-Zahl zwischen 193 und 224 ein: " SELECTED_BIT; break;;
+            "Bit 225-256") read -p "Geben Sie eine Bit-Zahl zwischen 225 und 256 ein: " SELECTED_BIT; break;;
+            "Manuelle Eingabe") read -p "Geben Sie die gewünschte Bit-Zahl (1-256) ein: " SELECTED_BIT; break;;
+            *) echo "Ungültige Auswahl. Bitte versuchen Sie es erneut.";;
+        esac
+    done
+    echo $SELECTED_BIT
+}
 
-## Usage
-- For multiple addresses or xpoints, file format must be binary with sorted data.
-- To convert Bitcoin addresses to rmd160 hashes, use the provided Python scripts.
-- For Ethereum addresses, use the eth_addresses_to_bin.py script.
+START_BIT=$(select_bit "Wählen Sie den START-Bereich für die Bit-Zahl: ")
+END_BIT=$(select_bit "Wählen Sie den END-Bereich für die Bit-Zahl: ")
 
-## Building
+if ! [[ "$START_BIT" =~ ^[0-9]+$ ]] || ! [[ "$END_BIT" =~ ^[0-9]+$ ]]; then
+    echo "Fehler: Die Bit-Bereiche müssen Zahlen sein."
+    exit 1
+fi
 
-### Windows
-Open KeyHunt-Cuda.sln in Visual Studio 2022 and build with CUDA 12.0 installed.
+if [ "$START_BIT" -ge "$END_BIT" ]; then
+    echo "Fehler: Der START-Bitbereich muss kleiner als der END-Bitbereich sein."
+    exit 1
+fi
 
-### Linux
-```bash
-# For CPU only build
-make
+# --- PYTHON-UMGEBUNG EINRICHTEN & BEREICH BERECHNEN ---
+VENV_DIR="keyhunt_env"
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Erstelle Python Virtual Environment in '$VENV_DIR'..."
+    python3 -m venv $VENV_DIR
+fi
+echo "Aktiviere Python Virtual Environment und installiere 'base58'..."
+./${VENV_DIR}/bin/pip install -q base58
 
-# For GPU enabled build
-make gpu=1
+echo "Berechne den Hexadezimal-Bereich mit Python..."
+KEY_RANGE=$(./${VENV_DIR}/bin/python3 -c "print(f'{2**(${START_BIT}-1):x}:{2**${END_BIT}-1:x}')")
+echo "Der berechnete Suchbereich ist: $KEY_RANGE"
+echo "Python-Abhängigkeiten sind bereit."
 
-# For GPU enabled build with specific compute capability
-make gpu=1 CCAP=86  # For RTX 30XX
-make gpu=1 CCAP=89  # For RTX 40XX
-```
 
-## Requirements
-- CUDA 12.X toolkit
-- For Windows: Visual Studio 2022
-- GMP library
+# --- KOMPILIERUNG ---
+echo -e "\n--- Kompiliere KeyHunt (mit CCAP=${CCAP}) ---"
+(cd KeyHunt-Cuda && make clean && make KeyHunt gpu=1 CCAP=${CCAP})
+if [ ! -f KeyHunt-Cuda/KeyHunt ]; then
+    echo "Fehler: Kompilierung von KeyHunt fehlgeschlagen."
+    exit 1
+fi
+echo "KeyHunt erfolgreich kompiliert."
+
+# --- DATEN HERUNTERLADEN UND VORBEREITEN ---
+echo -e "\n--- Lade Adressliste herunter und bereite sie vor ---"
+ADDRESS_FILE="Bitcoin_addresses_LATEST.txt"
+HASH_FILE_RAW="hash160_raw.bin"
+HASH_FILE_SORTED="hash160.bin"
+
+if [ ! -f "${ADDRESS_FILE}" ]; then
+    echo "Lade ${ADDRESS_FILE}.gz herunter..."
+    wget http://addresses.loyce.club/Bitcoin_addresses_LATEST.txt.gz
+    echo "Entpacke die Datei..."
+    gunzip Bitcoin_addresses_LATEST.txt.gz
+else
+    echo "Adressdatei '${ADDRESS_FILE}' bereits vorhanden. Download wird übersprungen."
+fi
+
+echo "Konvertiere Adressen zu hash160 (dies kann einige Minuten dauern)..."
+./${VENV_DIR}/bin/python3 addresses_to_hash160.py ${ADDRESS_FILE} ${HASH_FILE_RAW}
+
+echo "Sortiere die Binärdatei (dies kann ebenfalls dauern)..."
+(cd BinSort && make)
+./BinSort/BinSort 20 ${HASH_FILE_RAW} ${HASH_FILE_SORTED}
+rm ${HASH_FILE_RAW}
+echo "Vorbereitung der Adressdatei abgeschlossen. Die sortierte Datei ist '${HASH_FILE_SORTED}'."
+
+# --- SUCHE STARTEN ---
+echo -e "\n--- Starte KeyHunt auf ${GPU_COUNT} GPU(s) ---"
+GPU_IDS=$(seq -s, 0 $((GPU_COUNT - 1)))
+echo "Verwendete GPU-IDs: ${GPU_IDS}"
+echo "Verwendete Zieldatei: ${HASH_FILE_SORTED}"
+echo "Verwendeter Suchbereich: --range ${KEY_RANGE}"
+echo "Der Suchprozess wird jetzt gestartet. Drücken Sie STRG+C, um ihn zu beenden."
+
+# KeyHunt aus dem richtigen Verzeichnis starten
+./KeyHunt-Cuda/KeyHunt --gpu --mode ADDRESSES --coin BTC -i ${HASH_FILE_SORTED} --gpui ${GPU_IDS} --range ${KEY_RANGE}
+
+echo "Suche beendet."
