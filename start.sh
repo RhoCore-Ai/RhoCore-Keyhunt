@@ -5,7 +5,6 @@ set -e
 
 # --- BENUTZEREINGABEN ---
 echo "--- Hardware-Konfiguration ---"
-# Abfrage für GPU-Anzahl und Compute Capability
 if [ -z "$GPU_COUNT" ]; then
     read -p "Wie viele NVIDIA-GPUs möchten Sie verwenden?: " GPU_COUNT
 fi
@@ -15,12 +14,10 @@ fi
 
 # --- AUSWAHL DES BIT-BEREICHS ---
 echo -e "\n--- Konfiguration des Suchbereichs ---"
-
-# Funktion für das Auswahlmenü
 select_bit() {
     local PROMPT_MESSAGE=$1
     local SELECTED_BIT
-    PS3="$PROMPT_MESSAGE" # Setzt die Eingabeaufforderung für das Menü
+    PS3="$PROMPT_MESSAGE"
     options=("Bit 1-32" "Bit 33-64" "Bit 65-96" "Bit 97-128" "Bit 129-160" "Bit 161-192" "Bit 193-224" "Bit 225-256" "Manuelle Eingabe")
     select opt in "${options[@]}"; do
         case $opt in
@@ -36,15 +33,12 @@ select_bit() {
             *) echo "Ungültige Auswahl. Bitte versuchen Sie es erneut.";;
         esac
     done
-    # Gibt den ausgewählten Wert zurück
     echo $SELECTED_BIT
 }
 
 START_BIT=$(select_bit "Wählen Sie den START-Bereich für die Bit-Zahl: ")
 END_BIT=$(select_bit "Wählen Sie den END-Bereich für die Bit-Zahl: ")
 
-
-# Überprüft, ob die Eingaben gültig sind
 if ! [[ "$GPU_COUNT" =~ ^[0-9]+$ ]] || ! [[ "$CCAP" =~ ^[0-9]+$ ]] || ! [[ "$START_BIT" =~ ^[0-9]+$ ]] || ! [[ "$END_BIT" =~ ^[0-9]+$ ]]; then
     echo "Fehler: GPU-Anzahl, CCAP und Bit-Bereiche müssen Zahlen sein."
     exit 1
@@ -55,23 +49,8 @@ if [ "$START_BIT" -ge "$END_BIT" ]; then
     exit 1
 fi
 
-# --- BERECHNUNG DES HEX-BEREICHS ---
-echo "Berechne den Hexadezimal-Bereich..."
-# bc wird für die Berechnung mit großen Zahlen benötigt
-START_RANGE_DEC=$(echo "2^($START_BIT - 1)" | bc)
-END_RANGE_DEC=$(echo "(2^$END_BIT) - 1" | bc)
-
-# Konvertiere die Dezimalzahlen in Hexadezimal
-START_RANGE_HEX=$(printf '%x\n' $START_RANGE_DEC)
-END_RANGE_HEX=$(printf '%x\n' $END_RANGE_DEC)
-KEY_RANGE="${START_RANGE_HEX}:${END_RANGE_HEX}"
-echo "Der berechnete Suchbereich ist: $KEY_RANGE"
-
-
 # --- ABHÄNGIGKEITEN INSTALLIEREN ---
 echo -e "\n--- Überprüfe und installiere Abhängigkeiten ---"
-
-# Funktion zur Installation von Paketen
 install_package() {
     PACKAGE=$1
     if ! dpkg -s $PACKAGE >/dev/null 2>&1; then
@@ -81,8 +60,6 @@ install_package() {
         echo "$PACKAGE ist bereits installiert."
     fi
 }
-
-# Update der Paketlisten und Installation der System-Abhängigkeiten
 apt-get update
 install_package build-essential
 install_package wget
@@ -91,34 +68,33 @@ install_package libgmp-dev
 install_package python3
 install_package python3-pip
 install_package python3-venv
-install_package bc # Notwendig für die Bereichsberechnung
-
 echo "Alle System-Abhängigkeiten sind vorhanden."
 
-
-# --- PYTHON-UMGEBUNG EINRICHTEN ---
+# --- PYTHON-UMGEBUNG EINRICHTEN & BEREICH BERECHNEN ---
 VENV_DIR="keyhunt_env"
 if [ ! -d "$VENV_DIR" ]; then
     echo "Erstelle Python Virtual Environment in '$VENV_DIR'..."
     python3 -m venv $VENV_DIR
 fi
-
 echo "Aktiviere Python Virtual Environment und installiere 'base58'..."
-# Führe pip im venv aus, um base58 zu installieren
 ./${VENV_DIR}/bin/pip install -q base58
+
+echo "Berechne den Hexadezimal-Bereich mit Python..."
+# Python zur Berechnung großer Zahlen verwenden
+KEY_RANGE=$(./${VENV_DIR}/bin/python3 -c "print(f'{2**(${START_BIT}-1):x}:{2**${END_BIT}-1:x}')")
+echo "Der berechnete Suchbereich ist: $KEY_RANGE"
 echo "Python-Abhängigkeiten sind bereit."
 
 
 # --- KOMPILIERUNG ---
+# In das richtige Verzeichnis wechseln, kompilieren, und zurück wechseln
 echo -e "\n--- Kompiliere KeyHunt (mit CCAP=${CCAP}) ---"
-make clean
-make KeyHunt gpu=1 CCAP=${CCAP}
-if [ ! -f KeyHunt ]; then
+(cd KeyHunt-Cuda && make clean && make KeyHunt gpu=1 CCAP=${CCAP})
+if [ ! -f KeyHunt-Cuda/KeyHunt ]; then
     echo "Fehler: Kompilierung von KeyHunt fehlgeschlagen."
     exit 1
 fi
 echo "KeyHunt erfolgreich kompiliert."
-
 
 # --- DATEN HERUNTERLADEN UND VORBEREITEN ---
 echo -e "\n--- Lade Adressliste herunter und bereite sie vor ---"
@@ -136,31 +112,23 @@ else
 fi
 
 echo "Konvertiere Adressen zu hash160 (dies kann einige Minuten dauern)..."
-# Stelle sicher, dass das Python-Skript aus dem venv ausgeführt wird
 ./${VENV_DIR}/bin/python3 addresses_to_hash160.py ${ADDRESS_FILE} ${HASH_FILE_RAW}
 
 echo "Sortiere die Binärdatei (dies kann ebenfalls dauern)..."
-# BinSort kompilieren, falls noch nicht geschehen
 (cd BinSort && make)
 ./BinSort/BinSort ${HASH_FILE_RAW} ${HASH_FILE_SORTED}
-
-echo "Bereinige temporäre Dateien..."
 rm ${HASH_FILE_RAW}
 echo "Vorbereitung der Adressdatei abgeschlossen. Die sortierte Datei ist '${HASH_FILE_SORTED}'."
 
-
 # --- SUCHE STARTEN ---
 echo -e "\n--- Starte KeyHunt auf ${GPU_COUNT} GPU(s) ---"
-
-# Erstellt die GPU-ID-Liste (z.B. "0,1,2,3")
 GPU_IDS=$(seq -s, 0 $((GPU_COUNT - 1)))
-
 echo "Verwendete GPU-IDs: ${GPU_IDS}"
 echo "Verwendete Zieldatei: ${HASH_FILE_SORTED}"
 echo "Verwendeter Suchbereich: --range ${KEY_RANGE}"
 echo "Der Suchprozess wird jetzt gestartet. Drücken Sie STRG+C, um ihn zu beenden."
 
-# Der finale Befehl zum Starten der Suche
-./KeyHunt --gpu --mode ADDRESSES --coin BTC -i ${HASH_FILE_SORTED} --gpui ${GPU_IDS} --range ${KEY_RANGE}
+# KeyHunt aus dem richtigen Verzeichnis starten
+./KeyHunt-Cuda/KeyHunt --gpu --mode ADDRESSES --coin BTC -i ${HASH_FILE_SORTED} --gpui ${GPU_IDS} --range ${KEY_RANGE}
 
 echo "Suche beendet."
