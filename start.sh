@@ -80,14 +80,12 @@ echo "Aktiviere Python Virtual Environment und installiere 'base58'..."
 ./${VENV_DIR}/bin/pip install -q base58
 
 echo "Berechne den Hexadezimal-Bereich mit Python..."
-# Python zur Berechnung großer Zahlen verwenden
 KEY_RANGE=$(./${VENV_DIR}/bin/python3 -c "print(f'{2**(${START_BIT}-1):x}:{2**${END_BIT}-1:x}')")
 echo "Der berechnete Suchbereich ist: $KEY_RANGE"
 echo "Python-Abhängigkeiten sind bereit."
 
 
 # --- KOMPILIERUNG ---
-# In das richtige Verzeichnis wechseln, kompilieren, und zurück wechseln
 echo -e "\n--- Kompiliere KeyHunt (mit CCAP=${CCAP}) ---"
 (cd KeyHunt-Cuda && make clean && make KeyHunt gpu=1 CCAP=${CCAP})
 if [ ! -f KeyHunt-Cuda/KeyHunt ]; then
@@ -116,7 +114,8 @@ echo "Konvertiere Adressen zu hash160 (dies kann einige Minuten dauern)..."
 
 echo "Sortiere die Binärdatei (dies kann ebenfalls dauern)..."
 (cd BinSort && make)
-./BinSort/BinSort ${HASH_FILE_RAW} ${HASH_FILE_SORTED}
+# KORRIGIERTER BEFEHL HIER:
+./BinSort/BinSort 20 ${HASH_FILE_RAW} ${HASH_FILE_SORTED}
 rm ${HASH_FILE_RAW}
 echo "Vorbereitung der Adressdatei abgeschlossen. Die sortierte Datei ist '${HASH_FILE_SORTED}'."
 
