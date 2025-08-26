@@ -3,14 +3,40 @@
 # Stellt sicher, dass das Skript bei einem Fehler sofort beendet wird.
 set -e
 
-# --- BENUTZEREINGABEN ---
-echo "--- Hardware-Konfiguration ---"
-if [ -z "$GPU_COUNT" ]; then
-    read -p "Wie viele NVIDIA-GPUs möchten Sie verwenden?: " GPU_COUNT
-fi
-if [ -z "$CCAP" ]; then
-    read -p "Geben Sie die Compute Capability Ihrer GPUs an (z.B. 86 für RTX 3070): " CCAP
-fi
+# --- ABHÄNGIGKEITEN PRÜFEN ---
+echo -e "--- Überprüfe und installiere Abhängigkeiten ---"
+install_package() {
+    PACKAGE=$1
+    if ! dpkg -s $PACKAGE >/dev/null 2>&1; then
+        echo "Installiere $PACKAGE..."
+        apt-get install -y $PACKAGE
+    else
+        echo "$PACKAGE ist bereits installiert."
+    fi
+}
+apt-get update
+install_package build-essential
+install_package wget
+install_package gzip
+install_package libgmp-dev
+install_package python3
+install_package python3-pip
+install_package python3-venv
+
+# Prüfe auf nvidia-smi
+command -v nvidia-smi >/dev/null 2>&1 || { echo >&2 "Fehler: 'nvidia-smi' wurde nicht gefunden. Bitte stellen Sie sicher, dass die NVIDIA-Treiber korrekt installiert sind."; exit 1; }
+echo "Alle System-Abhängigkeiten sind vorhanden."
+
+
+# --- HARDWARE AUTOMATISCH ERKENNEN ---
+echo -e "\n--- Erkenne Hardware automatisch ---"
+GPU_COUNT=$(nvidia-smi --query-gpu=count --format=csv,noheader)
+COMPUTE_CAP=$(nvidia-smi -i 0 --query-gpu=compute_cap --format=csv,noheader) # Liest CCAP von der ersten GPU
+CCAP=$(echo $COMPUTE_CAP | tr -d '.')
+
+echo "Erkannt: ${GPU_COUNT} NVIDIA GPU(s)"
+echo "Erkannt: Compute Capability ${COMPUTE_CAP} (wird als CCAP=${CCAP} für die Kompilierung verwendet)"
+
 
 # --- AUSWAHL DES BIT-BEREICHS ---
 echo -e "\n--- Konfiguration des Suchbereichs ---"
@@ -39,8 +65,8 @@ select_bit() {
 START_BIT=$(select_bit "Wählen Sie den START-Bereich für die Bit-Zahl: ")
 END_BIT=$(select_bit "Wählen Sie den END-Bereich für die Bit-Zahl: ")
 
-if ! [[ "$GPU_COUNT" =~ ^[0-9]+$ ]] || ! [[ "$CCAP" =~ ^[0-9]+$ ]] || ! [[ "$START_BIT" =~ ^[0-9]+$ ]] || ! [[ "$END_BIT" =~ ^[0-9]+$ ]]; then
-    echo "Fehler: GPU-Anzahl, CCAP und Bit-Bereiche müssen Zahlen sein."
+if ! [[ "$START_BIT" =~ ^[0-9]+$ ]] || ! [[ "$END_BIT" =~ ^[0-9]+$ ]]; then
+    echo "Fehler: Die Bit-Bereiche müssen Zahlen sein."
     exit 1
 fi
 
@@ -48,27 +74,6 @@ if [ "$START_BIT" -ge "$END_BIT" ]; then
     echo "Fehler: Der START-Bitbereich muss kleiner als der END-Bitbereich sein."
     exit 1
 fi
-
-# --- ABHÄNGIGKEITEN INSTALLIEREN ---
-echo -e "\n--- Überprüfe und installiere Abhängigkeiten ---"
-install_package() {
-    PACKAGE=$1
-    if ! dpkg -s $PACKAGE >/dev/null 2>&1; then
-        echo "Installiere $PACKAGE..."
-        apt-get install -y $PACKAGE
-    else
-        echo "$PACKAGE ist bereits installiert."
-    fi
-}
-apt-get update
-install_package build-essential
-install_package wget
-install_package gzip
-install_package libgmp-dev
-install_package python3
-install_package python3-pip
-install_package python3-venv
-echo "Alle System-Abhängigkeiten sind vorhanden."
 
 # --- PYTHON-UMGEBUNG EINRICHTEN & BEREICH BERECHNEN ---
 VENV_DIR="keyhunt_env"
@@ -114,7 +119,6 @@ echo "Konvertiere Adressen zu hash160 (dies kann einige Minuten dauern)..."
 
 echo "Sortiere die Binärdatei (dies kann ebenfalls dauern)..."
 (cd BinSort && make)
-# KORRIGIERTER BEFEHL HIER:
 ./BinSort/BinSort 20 ${HASH_FILE_RAW} ${HASH_FILE_SORTED}
 rm ${HASH_FILE_RAW}
 echo "Vorbereitung der Adressdatei abgeschlossen. Die sortierte Datei ist '${HASH_FILE_SORTED}'."
