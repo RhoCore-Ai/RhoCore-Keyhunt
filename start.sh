@@ -3,31 +3,28 @@
 # Stellt sicher, dass das Skript bei einem Fehler sofort beendet wird.
 set -e
 
-# --- HAUPTFUNKTION: FÜHRT DEN GESAMTEN PROZESS AUS ---
+# --- GLOBALE VARIABLEN ---
+# Definieren der Variablen hier, damit sie in allen Funktionen verfügbar sind
+VENV_DIR="keyhunt_env"
+HASH_FILE_SORTED="hash160.bin"
+GPU_COUNT=0
+CCAP=0
+KEY_RANGE=""
+
+
+# --- HAUPTFUNKTION ---
 main() {
-    # 1. Systemvoraussetzungen prüfen und installieren
     check_dependencies
-    
-    # 2. Hardware automatisch erkennen
     detect_hardware
-    
-    # 3. Interaktive Auswahl des Suchbereichs
     select_search_range
-    
-    # 4. KeyHunt kompilieren, falls nicht vorhanden
     compile_keyhunt
-    
-    # 5. Adressdatei vorbereiten, falls nicht vorhanden
     prepare_address_file
-    
-    # 6. Die Suche starten
     start_search
 }
 
 
 # --- HILFSFUNKTIONEN ---
 
-# Funktion 1: Prüft und installiert alle Abhängigkeiten
 check_dependencies() {
     echo "--- 1. Überprüfe und installiere Abhängigkeiten ---"
     NEEDS_INSTALL=0
@@ -63,8 +60,6 @@ check_dependencies() {
         echo "Alle Abhängigkeiten sind vorhanden."
     fi
     
-    # Python-Umgebung
-    VENV_DIR="keyhunt_env"
     if [ ! -d "$VENV_DIR" ]; then
         echo "Erstelle Python Virtual Environment..."
         python3 -m venv "$VENV_DIR"
@@ -72,16 +67,14 @@ check_dependencies() {
     fi
 }
 
-# Funktion 2: Erkennt GPU-Anzahl und Typ
 detect_hardware() {
     echo -e "\n--- 2. Erkenne Hardware automatisch ---"
     GPU_COUNT=$(nvidia-smi --query-gpu=count --format=csv,noheader | head -n 1)
-    COMPUTE_CAP=$(nvidia-smi -i 0 --query-gpu=compute_cap --format=csv,noheader)
+    local COMPUTE_CAP=$(nvidia-smi -i 0 --query-gpu=compute_cap --format=csv,noheader)
     CCAP=$(echo "$COMPUTE_CAP" | tr -d '.')
     echo "Erkannt: ${GPU_COUNT} NVIDIA GPU(s) mit Compute Capability ${COMPUTE_CAP} (CCAP=${CCAP})"
 }
 
-# Funktion 3: Lässt den Benutzer den Suchbereich auswählen
 select_search_range() {
     echo -e "\n--- 3. Konfiguration des Suchbereichs ---"
     select_bit() {
@@ -103,17 +96,16 @@ select_search_range() {
         done
         echo "$SELECTED_BIT"
     }
-    START_BIT=$(select_bit "Wählen Sie den START-Bereich für die Bit-Zahl: ")
-    END_BIT=$(select_bit "Wählen Sie den END-Bereich für die Bit-Zahl: ")
+    local START_BIT=$(select_bit "Wählen Sie den START-Bereich für die Bit-Zahl: ")
+    local END_BIT=$(select_bit "Wählen Sie den END-Bereich für die Bit-Zahl: ")
     if ! [[ "$START_BIT" =~ ^[0-9]+$ && "$END_BIT" =~ ^[0-9]+$ && "$START_BIT" -lt "$END_BIT" ]]; then
         echo "Fehler: Ungültige Bit-Bereiche."
         exit 1
     fi
-    KEY_RANGE=$(./keyhunt_env/bin/python3 -c "print(f'{2**(${START_BIT}-1):x}:{2**${END_BIT}-1:x}')")
+    KEY_RANGE=$(./${VENV_DIR}/bin/python3 -c "print(f'{2**(${START_BIT}-1):x}:{2**${END_BIT}-1:x}')")
     echo "Der berechnete Suchbereich ist: $KEY_RANGE"
 }
 
-# Funktion 4: Kompiliert KeyHunt
 compile_keyhunt() {
     echo -e "\n--- 4. Prüfe KeyHunt-Kompilierung ---"
     if [ ! -f "KeyHunt-Cuda/KeyHunt" ]; then
@@ -126,22 +118,20 @@ compile_keyhunt() {
     fi
 }
 
-# Funktion 5: Lädt und verarbeitet die Adressdatei
 prepare_address_file() {
     echo -e "\n--- 5. Prüfe Adressdatei ---"
-    HASH_FILE_SORTED="hash160.bin"
     if [ ! -f "$HASH_FILE_SORTED" ]; then
         echo "Sortierte Adressdatei '${HASH_FILE_SORTED}' nicht gefunden. Starte Vorbereitung..."
-        ADDRESS_FILE="Bitcoin_addresses_LATEST.txt"
+        local ADDRESS_FILE="Bitcoin_addresses_LATEST.txt"
         if [ ! -f "$ADDRESS_FILE" ]; then
             echo "Lade ${ADDRESS_FILE}.gz herunter..."
             wget -q --show-progress http://addresses.loyce.club/Bitcoin_addresses_LATEST.txt.gz
             gunzip Bitcoin_addresses_LATEST.txt.gz
         fi
         
-        HASH_FILE_RAW="hash160_raw.bin"
+        local HASH_FILE_RAW="hash160_raw.bin"
         echo "Konvertiere Adressen zu hash160 (kann dauern)..."
-        ./keyhunt_env/bin/python3 addresses_to_hash160.py "$ADDRESS_FILE" "$HASH_FILE_RAW"
+        ./${VENV_DIR}/bin/python3 addresses_to_hash160.py "$ADDRESS_FILE" "$HASH_FILE_RAW"
         
         echo "Sortiere die Binärdatei (kann dauern)..."
         (cd BinSort && make)
@@ -153,10 +143,9 @@ prepare_address_file() {
     fi
 }
 
-# Funktion 6: Startet den eigentlichen Suchprozess
 start_search() {
     echo -e "\n--- 6. Starte KeyHunt auf ${GPU_COUNT} GPU(s) ---"
-    GPU_IDS=$(seq -s, 0 $((GPU_COUNT - 1)))
+    local GPU_IDS=$(seq -s, 0 $((GPU_COUNT - 1)))
     echo "Verwendete GPU-IDs: ${GPU_IDS}"
     echo "Verwendete Zieldatei: ${HASH_FILE_SORTED}"
     echo "Verwendeter Suchbereich: --range ${KEY_RANGE}"
