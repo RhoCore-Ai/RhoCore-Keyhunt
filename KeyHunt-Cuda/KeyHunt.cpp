@@ -32,7 +32,7 @@ bool KeyHunt::isKeyFiltered(Int& key)
 {
     // Konvertiere den Schlüssel in einen Hex-String für die Analyse
     std::string hexStr = key.GetBase16();
-    
+
     // Fülle mit führenden Nullen auf, um eine feste Länge von 64 zu gewährleisten
     if (hexStr.length() < 64) {
         hexStr.insert(0, 64 - hexStr.length(), '0');
@@ -43,13 +43,21 @@ bool KeyHunt::isKeyFiltered(Int& key)
     if (first_digit_pos == std::string::npos) {
         return false; // Schlüssel ist 0
     }
-    
+
     // Wende die Filterregeln nur auf den relevanten Teil des Schlüssels an
     // Wir prüfen ab der ersten signifikanten Ziffer
     if (first_digit_pos < 62) { // Sicherstellen, dass wir nicht über das Ende hinauslesen
-        for (size_t i = first_digit_pos; i < hexStr.length() - 2; ++i) {
+        size_t i = first_digit_pos;
+        while (i < hexStr.length() - 2) {
             // Regel 1: Keine drei aufeinanderfolgenden gleichen Zeichen (xxx)
             if (hexStr[i] == hexStr[i+1] && hexStr[i] == hexStr[i+2]) {
+                // Optimierung: Überspringe ganze Block von identischen chars
+                char skip_char = hexStr[i];
+                size_t j = i + 3;
+                while (j < hexStr.length() && hexStr[j] == skip_char) {
+                    ++j;
+                }
+                i = j;
                 return true; // Schlüssel überspringen
             }
             // Regel 2: Keine zwei aufeinanderfolgenden Paare (xxyy)
@@ -58,9 +66,10 @@ bool KeyHunt::isKeyFiltered(Int& key)
                     return true; // Schlüssel überspringen
                 }
             }
+            ++i;
         }
     }
-    
+
     return false; // Schlüssel ist gültig
 }
 // ====================================================================================
@@ -512,23 +521,39 @@ void KeyHunt::FindKeyCPUThread(TH_PARAM* param)
 
 	// Search loop
 	while (key.IsLower(&rangeEnd) && !param->endOfSearch) {
-		// Check key
-		if (this->compMode) {
-			CheckAddresses(true, key, &found);
+		// Apply key filtering before expensive operations
+		// Skip entire blocks if the starting key is filtered
+		while (isKeyFiltered(key) && key.IsLower(&rangeEnd)) {
+			// Skip the entire block by incrementing by CPU_GRP_SIZE
+			key.Add((uint64_t)CPU_GRP_SIZE);
+			count += CPU_GRP_SIZE;
+			rkeyCount += CPU_GRP_SIZE;
 		}
-		else {
-			CheckAddresses(false, key, &found);
+
+		// Check if we've exceeded the range after skipping
+		if (!key.IsLower(&rangeEnd)) {
+			break;
 		}
 
-		// Increment key
-		key.AddOne();
+		// Process the block - only check individual keys if the block start is valid
+		for (int i = 0; i < CPU_GRP_SIZE && key.IsLower(&rangeEnd) && !param->endOfSearch; i++) {
+			// Check key
+			if (this->compMode) {
+				CheckAddresses(true, key, &found);
+			}
+			else {
+				CheckAddresses(false, key, &found);
+			}
 
-		// Update counters
-		count++;
-		rkeyCount++;
+			// Increment key
+			key.AddOne();
 
-		// Check if we need to report
-		if (rkeyCount >= this->rKey) {
+			// Update counters
+			count++;
+			rkeyCount++;
+
+			// Check if we need to report
+			if (rkeyCount >= this->rKey) {
 			param->rKeyCount = rkeyCount;
 			rkeyCount = 0;
 		}

@@ -20,31 +20,45 @@ This update makes KeyHunt-Cuda compatible with RTX 30XX, 40XX and 50XX series GP
    - Added support for compute capability 8.9 (RTX 40XX) in `_ConvertSMVer2Cores` function
    - Added preliminary support for compute capability 12.0 (RTX 50XX)
 
-4. **KeyHunt-Cuda/KeyHunt.cpp**
+4. **KeyHunt-Cuda/Timer.h**
+   - Added missing `#include <cstdint>` to fix uint32_t compilation errors
+   - Fixed compilation issues with modern C++ compilers
+
+5. **KeyHunt-Cuda/Main.cpp**
+   - Added missing `#include <inttypes.h>` for PRIu64 format specifiers
+   - Fixed printf format issue with %llu to %" PRIu64
+   - Maintained all existing functionality
+
+6. **KeyHunt-Cuda/SECP256k1.h**
+   - Added missing `#include <cstdint>` to fix uint32_t compilation errors
+
+7. **KeyHunt-Cuda/KeyHunt.cpp**
    - Converted to UTF-8 encoding
    - Added key filtering rules for improved search efficiency
    - Enhanced key validation and processing
+   - Implemented CPU block skipping optimization
+   - Added isKeyFiltered helper function for custom rule checking
 
-5. **KeyHunt-Cuda/KeyHunt.h**
+8. **KeyHunt-Cuda/KeyHunt.h**
    - Converted to UTF-8 encoding
    - Maintained all existing functionality and interfaces
 
-6. **start.sh**
+9. **start.sh**
    - Added automatic detection for RTX 20XX/30XX/40XX/50XX series
    - Enhanced GPU series identification based on compute capability
    - Added specific compilation messages for each GPU series
    - Converted to UTF-8 encoding
 
-7. **README.md**
-   - Updated documentation to reflect CUDA 12.X compatibility
-   - Added instructions for building with RTX 30XX, 40XX and 50XX support
-   - Added comprehensive GPU support information
-   - Converted to UTF-8 encoding
+10. **README.md**
+    - Updated documentation to reflect CUDA 12.X compatibility
+    - Added instructions for building with RTX 30XX, 40XX and 50XX support
+    - Added comprehensive GPU support information
+    - Converted to UTF-8 encoding
 
-8. **Python Scripts**
-   - Added UTF-8 encoding specification to file operations
-   - Updated addresses_to_hash160.py, eth_addresses_to_bin.py and keyhunt_manager.py
-   - Improved error handling and messaging
+11. **Python Scripts**
+    - Added UTF-8 encoding specification to file operations
+    - Updated addresses_to_hash160.py, eth_addresses_to_bin.py and keyhunt_manager.py
+    - Improved error handling and messaging
 
 ### Compute Capabilities Added
 
@@ -52,6 +66,23 @@ This update makes KeyHunt-Cuda compatible with RTX 30XX, 40XX and 50XX series GP
 - **8.6**: RTX 30XX series GPUs
 - **8.9**: RTX 40XX series GPUs
 - **12.0**: RTX 50XX series GPUs (Preliminary support)
+
+### Key Filtering Implementation
+
+A custom key filtering system has been implemented to optimize the search process:
+
+1. **Filter Rules**:
+   - No three consecutive identical hexadecimal digits (...xxx...)
+   - No two consecutive pairs of identical hexadecimal digits (...xxyy...)
+
+2. **CPU Implementation**:
+   - Added `isKeyFiltered()` helper function to check keys against custom rules
+   - Implemented block skipping optimization to skip entire blocks of keys when the starting key is filtered
+   - Integrated filtering at the source of key generation before expensive cryptographic operations
+
+3. **GPU Implementation**:
+   - Currently uses existing GPU search mechanisms
+   - Future work could implement filtering in GPU kernels for even better performance
 
 ### Building for Specific GPUs
 

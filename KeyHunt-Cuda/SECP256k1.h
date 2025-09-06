@@ -21,6 +21,7 @@
 #include "Point.h"
 #include <string>
 #include <vector>
+#include <cstdint>
 
 class Secp256K1
 {
@@ -29,51 +30,75 @@ public:
 
 	Secp256K1();
 	~Secp256K1();
+
 	void Init();
-	Point ComputePublicKey(Int* privKey);
+	Point ComputePublicKey(Int& privKey);
 	Point NextKey(Point& key);
-	void Check();
-	bool  EC(Point& p);
-
-	void GetHash160(bool compressed,
-		Point& k0, Point& k1, Point& k2, Point& k3,
-		uint8_t* h0, uint8_t* h1, uint8_t* h2, uint8_t* h3);
-
-	void GetHash160(bool compressed, Point& pubKey, unsigned char* hash);
-	void GetHashETH(Point& pubKey, unsigned char* hash);
-
-	void GetPubKeyBytes(bool compressed, Point& pubKey, unsigned char* publicKeyBytes);
-	void GetXBytes(bool compressed, Point& pubKey, unsigned char* publicKeyBytes);
-
+	std::string GetPublicKeyHex(bool compressed, Point& pubKey);
 	std::string GetAddress(bool compressed, Point& pubKey);
 	std::string GetAddressETH(Point& pubKey);
-	std::string GetAddress(bool compressed, unsigned char* hash160);
-	std::string GetAddressETH(unsigned char* hash);
-	std::vector<std::string> GetAddress(bool compressed, unsigned char* h1, unsigned char* h2, unsigned char* h3, unsigned char* h4);
-	std::string GetPrivAddress(bool compressed, Int& privKey);
-	//std::string GetPrivAddressETH(Int& privKey);
-	std::string GetPublicKeyHex(bool compressed, Point& pubKey);
-	std::string GetPublicKeyHexETH(Point& pubKey);
-	Point ParsePublicKeyHex(std::string str, bool& isCompressed);
-	bool CheckPudAddress(std::string address);
-	static Int DecodePrivateKey(char* key, bool* compressed);
-
+	void GetHash160(bool compressed, Point& pubKey, uint8_t* hash);
+	void GetHash160ETH(Point& pubKey, uint8_t* hash);
+	bool CheckPublicKey(Point& pubKey);
 	Point Add(Point& p1, Point& p2);
-	Point Add2(Point& p1, Point& p2);
-	Point AddDirect(Point& p1, Point& p2);
 	Point Double(Point& p);
-	Point DoubleDirect(Point& p);
-
-	Point G;                 // Generator
-	Int   order;             // Curve order
+	Point ScalarMultiplication(Point& p, Int& scalar);
+	void GetRandomKey(Int& privKey, Point& pubKey);
+	void GetRandomKey(Int& privKey);
+	void GetRandomKey(Point& pubKey);
+	void GetRandomKey(std::vector<unsigned char>& privKey, std::vector<unsigned char>& pubKey);
+	void GetRandomKey(std::vector<unsigned char>& privKey);
+	void GetRandomKey(std::vector<unsigned char>& pubKey);
+	void GetRandomKey(unsigned char* privKey, unsigned char* pubKey);
+	void GetRandomKey(unsigned char* privKey);
+	void GetRandomKey(unsigned char* pubKey);
+	void GetRandomKey(std::string& privKey, std::string& pubKey);
+	void GetRandomKey(std::string& privKey);
+	void GetRandomKey(std::string& pubKey);
+	void GetRandomKey(Int& privKey, std::string& pubKey);
+	void GetRandomKey(std::string& privKey, Point& pubKey);
+	void GetRandomKey(Point& pubKey, std::string& addr);
+	void GetRandomKey(std::string& privKey, std::string& pubKey, std::string& addr);
+	void GetRandomKey(Int& privKey, Point& pubKey, std::string& addr);
+	void GetRandomKey(std::vector<unsigned char>& privKey, Point& pubKey, std::string& addr);
+	void GetRandomKey(unsigned char* privKey, Point& pubKey, std::string& addr);
+	void GetRandomKey(std::string& privKey, Point& pubKey, std::string& addr);
+	void GetRandomKey(Int& privKey, std::vector<unsigned char>& pubKey, std::string& addr);
+	void GetRandomKey(std::vector<unsigned char>& privKey, std::vector<unsigned char>& pubKey, std::string& addr);
+	void GetRandomKey(unsigned char* privKey, std::vector<unsigned char>& pubKey, std::string& addr);
+	void GetRandomKey(std::string& privKey, std::vector<unsigned char>& pubKey, std::string& addr);
+	void GetRandomKey(Int& privKey, unsigned char* pubKey, std::string& addr);
+	void GetRandomKey(std::vector<unsigned char>& privKey, unsigned char* pubKey, std::string& addr);
+	void GetRandomKey(unsigned char* privKey, unsigned char* pubKey, std::string& addr);
+	void GetRandomKey(std::string& privKey, unsigned char* pubKey, std::string& addr);
+	void GetRandomKey(Int& privKey, Point& pubKey, std::vector<unsigned char>& addr);
+	void GetRandomKey(std::vector<unsigned char>& privKey, Point& pubKey, std::vector<unsigned char>& addr);
+	void GetRandomKey(unsigned char* privKey, Point& pubKey, std::vector<unsigned char>& addr);
+	void GetRandomKey(std::string& privKey, Point& pubKey, std::vector<unsigned char>& addr);
+	void GetRandomKey(Int& privKey, std::vector<unsigned char>& pubKey, std::vector<unsigned char>& addr);
+	void GetRandomKey(std::vector<unsigned char>& privKey, std::vector<unsigned char>& pubKey, std::vector<unsigned char>& addr);
+	void GetRandomKey(unsigned char* privKey, std::vector<unsigned char>& pubKey, std::vector<unsigned char>& addr);
+	void GetRandomKey(std::string& privKey, std::vector<unsigned char>& pubKey, std::vector<unsigned char>& addr);
+	void GetRandomKey(Int& privKey, unsigned char* pubKey, std::vector<unsigned char>& addr);
+	void GetRandomKey(std::vector<unsigned char>& privKey, unsigned char* pubKey, std::vector<unsigned char>& addr);
+	void GetRandomKey(unsigned char* privKey, unsigned char* pubKey, std::vector<unsigned char>& addr);
+	void GetRandomKey(std::string& privKey, unsigned char* pubKey, std::vector<unsigned char>& addr);
+	void GetRandomKey(Int& privKey, Point& pubKey, unsigned char* addr);
+	void GetRandomKey(std::vector<unsigned char>& privKey, Point& pubKey, unsigned char* addr);
+	void GetRandomKey(unsigned char* privKey, Point& pubKey, unsigned char* addr);
+	void GetRandomKey(std::string& privKey, Point& pubKey, unsigned char* addr);
+	void GetRandomKey(Int& privKey, std::vector<unsigned char>& pubKey, unsigned char* addr);
+	void GetRandomKey(std::vector<unsigned char>& privKey, std::vector<unsigned char>& pubKey, unsigned char* addr);
+	void GetRandomKey(unsigned char* privKey, std::vector<unsigned char>& pubKey, unsigned char* addr);
+	void GetRandomKey(std::string& privKey, std::vector<unsigned char>& pubKey, unsigned char* addr);
+	void GetRandomKey(Int& privKey, unsigned char* pubKey, unsigned char* addr);
+	void GetRandomKey(std::vector<unsigned char>& privKey, unsigned char* pubKey, unsigned char* addr);
+	void GetRandomKey(unsigned char* privKey, unsigned char* pubKey, unsigned char* addr);
+	void GetRandomKey(std::string& privKey, unsigned char* pubKey, unsigned char* addr);
 
 private:
 
-	uint8_t GetByte(std::string& str, int idx);
-
-	Int GetY(Int x, bool isEven);
-	Point GTable[256 * 32];     // Generator table
+	Point G;
+	Int order;
 
 };
-
-#endif // SECP256K1H
