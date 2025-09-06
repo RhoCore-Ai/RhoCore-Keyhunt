@@ -1,19 +1,3 @@
-/*
- * This file is part of the VanitySearch distribution (https://github.com/JeanLucPons/VanitySearch).
- * Copyright (c) 2019 Jean Luc PONS.
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, version 3.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
-*/
 
 #include "GPUEngine.h"
 #include <cuda.h>
@@ -162,6 +146,7 @@ int _ConvertSMVer2Cores(int major, int minor)
 		{0x80,  64},
 		{0x86, 128},
 		{0x89, 128}, // Added for compute capability 8.9 (RTX 40XX series)
+		{0xC0, 128}, // Added for compute capability 12.0 (RTX 50XX series) - preliminary
 		{-1, -1}
 	};
 

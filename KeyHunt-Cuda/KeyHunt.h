@@ -49,6 +49,7 @@ public:
 	void FindKeyCPU(TH_PARAM* p);
 	void FindKeyGPU(TH_PARAM* p);
 
+
 private:
 
 	void InitGenratorTable();

@@ -2,7 +2,7 @@ import sys
 
 
 def eth_addresses_to_bin(filein, fileout):
-    with open(filein) as inf, open(fileout, 'wb') as outf:
+    with open(filein, 'r', encoding='utf-8') as inf, open(fileout, 'wb') as outf:
         count = 0
         skip = 0
         for x in inf.readlines():

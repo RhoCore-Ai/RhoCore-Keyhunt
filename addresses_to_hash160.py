@@ -5,7 +5,7 @@ import base58
 
 
 def addresses_to_hash160(filein, fileout):
-    with open(filein) as inf, open(fileout, 'wb') as outf:
+    with open(filein, 'r', encoding='utf-8') as inf, open(fileout, 'wb') as outf:
         count = 0
         skip = 0
         for address in inf.readlines():

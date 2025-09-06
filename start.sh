@@ -4,13 +4,39 @@
 set -e
 
 # --- GLOBALE VARIABLEN ---
-# Definieren der Variablen hier, damit sie in allen Funktionen verfügbar sind
+# Definieren der Variablen hier, damit sie in allen Funktionen verfÃ¼gbar sind
 VENV_DIR="keyhunt_env"
 HASH_FILE_SORTED="hash160.bin"
 GPU_COUNT=0
 CCAP=0
 KEY_RANGE=""
 
+# Funktion zur Erkennung der Compute Capability fÃ¼r verschiedene GPU-Serien
+detect_compute_capability() {
+    local COMPUTE_CAP=$(nvidia-smi -i 0 --query-gpu=compute_cap --format=csv,noheader)
+    local CCAP_NUMERIC=$(echo "$COMPUTE_CAP" | tr -d '.')
+
+    # PrÃ¼fung auf verschiedene GPU-Serien basierend auf Compute Capability
+    case $CCAP_NUMERIC in
+        120)
+            echo "Erkannt: RTX 50XX Series mit Compute Capability ${COMPUTE_CAP} (CCAP=${CCAP_NUMERIC})"
+            ;;
+        89)
+            echo "Erkannt: RTX 40XX Series mit Compute Capability ${COMPUTE_CAP} (CCAP=${CCAP_NUMERIC})"
+            ;;
+        86)
+            echo "Erkannt: RTX 30XX Series mit Compute Capability ${COMPUTE_CAP} (CCAP=${CCAP_NUMERIC})"
+            ;;
+        75)
+            echo "Erkannt: RTX 20XX Series mit Compute Capability ${COMPUTE_CAP} (CCAP=${CCAP_NUMERIC})"
+            ;;
+        *)
+            echo "Erkannt: Andere GPU mit Compute Capability ${COMPUTE_CAP} (CCAP=${CCAP_NUMERIC})"
+            ;;
+    esac
+
+    echo $CCAP_NUMERIC
+}
 
 # --- HAUPTFUNKTION ---
 main() {
@@ -26,19 +52,19 @@ main() {
 # --- HILFSFUNKTIONEN ---
 
 check_dependencies() {
-    echo "--- 1. Überprüfe und installiere Abhängigkeiten ---"
+    echo "--- 1. ÃœberprÃ¼fe und installiere AbhÃ¤ngigkeiten ---"
     NEEDS_INSTALL=0
     
     install_package() {
         if ! dpkg -s "$1" >/dev/null 2>&1; then
-            echo "Paket '$1' wird benötigt."
+            echo "Paket '$1' wird benÃ¶tigt."
             NEEDS_INSTALL=1
         fi
     }
     
     check_command() {
         if ! command -v "$1" >/dev/null 2>&1; then
-            echo "Befehl '$1' wird benötigt (normalerweise in 'build-essential' oder 'nvidia-driver')."
+            echo "Befehl '$1' wird benÃ¶tigt (normalerweise in 'build-essential' oder 'nvidia-driver')."
             NEEDS_INSTALL=1
         fi
     }
@@ -53,11 +79,11 @@ check_dependencies() {
     check_command nvidia-smi
 
     if [ "$NEEDS_INSTALL" -eq 1 ]; then
-        echo "Einige Abhängigkeiten fehlen. Führe Installation aus..."
+        echo "Einige AbhÃ¤ngigkeiten fehlen. FÃ¼hre Installation aus..."
         sudo apt-get update
         sudo apt-get install -y build-essential wget gzip libgmp-dev python3 python3-pip python3-venv
     else
-        echo "Alle Abhängigkeiten sind vorhanden."
+        echo "Alle AbhÃ¤ngigkeiten sind vorhanden."
     fi
     
     if [ ! -d "$VENV_DIR" ]; then
@@ -70,9 +96,8 @@ check_dependencies() {
 detect_hardware() {
     echo -e "\n--- 2. Erkenne Hardware automatisch ---"
     GPU_COUNT=$(nvidia-smi --query-gpu=count --format=csv,noheader | head -n 1)
-    local COMPUTE_CAP=$(nvidia-smi -i 0 --query-gpu=compute_cap --format=csv,noheader)
-    CCAP=$(echo "$COMPUTE_CAP" | tr -d '.')
-    echo "Erkannt: ${GPU_COUNT} NVIDIA GPU(s) mit Compute Capability ${COMPUTE_CAP} (CCAP=${CCAP})"
+    CCAP=$(detect_compute_capability)
+    echo "Erkannt: ${GPU_COUNT} NVIDIA GPU(s)"
 }
 
 select_search_range() {
@@ -90,16 +115,16 @@ select_search_range() {
                 "Bit 161-192") read -p "Geben Sie eine Bit-Zahl zwischen 161 und 192 ein: " SELECTED_BIT; break;;
                 "Bit 193-224") read -p "Geben Sie eine Bit-Zahl zwischen 193 und 224 ein: " SELECTED_BIT; break;;
                 "Bit 225-256") read -p "Geben Sie eine Bit-Zahl zwischen 225 und 256 ein: " SELECTED_BIT; break;;
-                "Manuelle Eingabe") read -p "Geben Sie die gewünschte Bit-Zahl (1-256) ein: " SELECTED_BIT; break;;
-                *) echo "Ungültige Auswahl.";;
+                "Manuelle Eingabe") read -p "Geben Sie die gewÃ¼nschte Bit-Zahl (1-256) ein: " SELECTED_BIT; break;;
+                *) echo "UngÃ¼ltige Auswahl.";;
             esac
         done
         echo "$SELECTED_BIT"
     }
-    local START_BIT=$(select_bit "Wählen Sie den START-Bereich für die Bit-Zahl: ")
-    local END_BIT=$(select_bit "Wählen Sie den END-Bereich für die Bit-Zahl: ")
+    local START_BIT=$(select_bit "WÃ¤hlen Sie den START-Bereich fÃ¼r die Bit-Zahl: ")
+    local END_BIT=$(select_bit "WÃ¤hlen Sie den END-Bereich fÃ¼r die Bit-Zahl: ")
     if ! [[ "$START_BIT" =~ ^[0-9]+$ && "$END_BIT" =~ ^[0-9]+$ && "$START_BIT" -lt "$END_BIT" ]]; then
-        echo "Fehler: Ungültige Bit-Bereiche."
+        echo "Fehler: UngÃ¼ltige Bit-Bereiche."
         exit 1
     fi
     KEY_RANGE=$(./${VENV_DIR}/bin/python3 -c "print(f'{2**(${START_BIT}-1):x}:{2**${END_BIT}-1:x}')")
@@ -107,7 +132,26 @@ select_search_range() {
 }
 
 compile_keyhunt() {
-    echo -e "\n--- 4. Prüfe KeyHunt-Kompilierung ---"
+    echo -e "\n--- 4. PrÃ¼fe KeyHunt-Kompilierung ---"
+    # Anzeige der GPU-Serie basierend auf der Compute Capability
+    case $CCAP in
+        120)
+            echo "Kompilierung fÃ¼r RTX 50XX Series (Compute Capability 12.0)"
+            ;;
+        89)
+            echo "Kompilierung fÃ¼r RTX 40XX Series (Compute Capability 8.9)"
+            ;;
+        86)
+            echo "Kompilierung fÃ¼r RTX 30XX Series (Compute Capability 8.6)"
+            ;;
+        75)
+            echo "Kompilierung fÃ¼r RTX 20XX Series (Compute Capability 7.5)"
+            ;;
+        *)
+            echo "Kompilierung fÃ¼r unbekannte GPU mit Compute Capability $CCAP"
+            ;;
+    esac
+    
     if [ ! -f "KeyHunt-Cuda/KeyHunt" ]; then
         echo "KeyHunt wird kompiliert (mit CCAP=${CCAP})..."
         (cd KeyHunt-Cuda && make clean && make KeyHunt gpu=1 CCAP=${CCAP})
@@ -119,7 +163,7 @@ compile_keyhunt() {
 }
 
 prepare_address_file() {
-    echo -e "\n--- 5. Prüfe Adressdatei ---"
+    echo -e "\n--- 5. PrÃ¼fe Adressdatei ---"
     if [ ! -f "$HASH_FILE_SORTED" ]; then
         echo "Sortierte Adressdatei '${HASH_FILE_SORTED}' nicht gefunden. Starte Vorbereitung..."
         local ADDRESS_FILE="Bitcoin_addresses_LATEST.txt"
@@ -133,7 +177,7 @@ prepare_address_file() {
         echo "Konvertiere Adressen zu hash160 (kann dauern)..."
         ./${VENV_DIR}/bin/python3 addresses_to_hash160.py "$ADDRESS_FILE" "$HASH_FILE_RAW"
         
-        echo "Sortiere die Binärdatei (kann dauern)..."
+        echo "Sortiere die BinÃ¤rdatei (kann dauern)..."
         (cd BinSort && make)
         ./BinSort/BinSort 20 "$HASH_FILE_RAW" "$HASH_FILE_SORTED"
         rm "$HASH_FILE_RAW"
@@ -149,7 +193,27 @@ start_search() {
     echo "Verwendete GPU-IDs: ${GPU_IDS}"
     echo "Verwendete Zieldatei: ${HASH_FILE_SORTED}"
     echo "Verwendeter Suchbereich: --range ${KEY_RANGE}"
-    echo "Der Suchprozess wird jetzt gestartet. Drücken Sie STRG+C, um ihn zu beenden."
+    
+    # Anzeige der GPU-Serie basierend auf der Compute Capability
+    case $CCAP in
+        120)
+            echo "Starte Suche auf RTX 50XX Series (Compute Capability 12.0)"
+            ;;
+        89)
+            echo "Starte Suche auf RTX 40XX Series (Compute Capability 8.9)"
+            ;;
+        86)
+            echo "Starte Suche auf RTX 30XX Series (Compute Capability 8.6)"
+            ;;
+        75)
+            echo "Starte Suche auf RTX 20XX Series (Compute Capability 7.5)"
+            ;;
+        *)
+            echo "Starte Suche auf unbekannter GPU mit Compute Capability $CCAP"
+            ;;
+    esac
+    
+    echo "Der Suchprozess wird jetzt gestartet. DrÃ¼cken Sie STRG+C, um ihn zu beenden."
     
     ./KeyHunt-Cuda/KeyHunt --gpu --mode ADDRESSES --coin BTC -i "$HASH_FILE_SORTED" --gpui "$GPU_IDS" --range "$KEY_RANGE"
     
