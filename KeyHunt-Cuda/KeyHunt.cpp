@@ -38,6 +38,13 @@ bool KeyHunt::isKeyFiltered(Int& key)
         hexStr.insert(0, 64 - hexStr.length(), '0');
     }
 
+    // Verwende den ML-Filter für eine intelligentere Entscheidung
+    static MLFilter mlFilter;
+    if (mlFilter.isKeyFiltered(hexStr)) {
+        return true; // Schlüssel überspringen basierend auf ML-Modell
+    }
+
+    // Fallback auf das bestehende Regelwerk
     // Finde die erste Ziffer, die nicht '0' ist
     size_t first_digit_pos = hexStr.find_first_not_of('0');
     if (first_digit_pos == std::string::npos) {

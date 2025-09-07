@@ -49,7 +49,42 @@ Diese Optimierung ermöglicht es, ganze Blöcke von Schlüsseln zu überspringen
 
 ### 3. GPU-Integration
 
-Die aktuelle GPU-Implementierung verwendet die bestehenden Suchmechanismen. Zukünftige Verbesserungen könnten die Filterung direkt in die GPU-Kernel integrieren, um noch bessere Leistung zu erzielen.
+Die vollständige GPU-Integration umfasst:
+
+#### GPU-seitige Filterfunktion
+Eine Gerätefunktion wurde implementiert, um die Filterung direkt auf der GPU durchzuführen:
+
+```cpp
+__device__ __forceinline__ bool isKeyFiltered(uint64_t* key);
+```
+
+Diese Funktion:
+1. Konvertiert den 256-Bit-Schlüssel in eine Hexadezimalrepräsentation
+2. Wendet die gleichen Filterregeln an wie die CPU-Version
+3. Gibt `true` zurück, wenn der Schlüssel gefiltert werden soll
+
+#### Integration in GPU-Kernel
+Die Filterfunktion wurde in alle ComputeKeys-Funktionen integriert:
+
+```cpp
+// Check if the starting key should be filtered
+if (isKeyFiltered(sx)) {
+    // If key is filtered, skip the entire computation
+    return;
+}
+```
+
+Dies wurde für alle Suchmodi implementiert:
+- SEARCH_MODE_MA (Multiple Addresses)
+- SEARCH_MODE_SA (Single Address)
+- SEARCH_MODE_MX (Multiple XPoints)
+- SEARCH_MODE_SX (Single XPoint)
+- ETH-Modi für Ethereum-Adressen
+
+#### Vorteile der GPU-Integration
+1. **Frühzeitiges Überspringen**: Schlüssel werden bereits vor teuren kryptografischen Berechnungen gefiltert
+2. **Keine Datenübertragung**: Gefilterte Schlüssel werden nicht vom Host zum Gerät übertragen
+3. **Volle Parallelität**: Jeder GPU-Thread filtert unabhängig seine Schlüssel
 
 ## Leistungsoptimierung
 
@@ -58,9 +93,10 @@ Die Implementierung wurde mit folgenden Optimierungen durchgeführt:
 1. **Frühzeitige Filterung**: Die Filterung erfolgt vor teuren kryptografischen Operationen
 2. **Block-Skipping**: Ganze Blöcke werden übersprungen, wenn der Startschlüssel gefiltert ist
 3. **String-basierte Prüfung**: Die Filterung erfolgt auf der CPU, wo die Schlüssel generiert werden
+4. **GPU-seitige Filterung**: Direkte Filterung in den GPU-Kernels vermeidet unnötige Berechnungen
 
 ## Zukünftige Verbesserungen
 
-1. **GPU-Kernel-Integration**: Implementierung der Filterlogik direkt in den GPU-Kernels
-2. **Erweiterte Filterregeln**: Hinzufügen zusätzlicher Filterregeln basierend auf statistischen Analysen
-3. **Konfigurierbare Regeln**: Ermöglichen der Konfiguration der Filterregeln zur Laufzeit
+1. **Erweiterte Filterregeln**: Hinzufügen zusätzlicher Filterregeln basierend auf statistischen Analysen
+2. **Konfigurierbare Regeln**: Ermöglichen der Konfiguration der Filterregeln zur Laufzeit
+3. **Optimierte Hex-Konvertierung**: Verbesserung der GPU-seitigen Hex-Konvertierung für bessere Leistung

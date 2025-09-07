@@ -6,6 +6,7 @@
 #include "SECP256k1.h"
 #include "Bloom.h"
 #include "GPU/GPUEngine.h"
+#include "MLFilter.h"
 #ifdef WIN64
 #include <Windows.h>
 #endif

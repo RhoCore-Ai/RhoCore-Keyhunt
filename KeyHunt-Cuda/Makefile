@@ -7,7 +7,7 @@ SRC = Base58.cpp IntGroup.cpp Main.cpp Bloom.cpp Random.cpp \
       Timer.cpp Int.cpp IntMod.cpp Point.cpp SECP256K1.cpp \
       KeyHunt.cpp GPU/GPUGenerate.cpp hash/ripemd160.cpp \
       hash/sha256.cpp hash/sha512.cpp hash/ripemd160_sse.cpp \
-      hash/sha256_sse.cpp hash/keccak160.cpp GmpUtil.cpp CmdParse.cpp
+      hash/sha256_sse.cpp hash/keccak160.cpp GmpUtil.cpp CmdParse.cpp MLFilter.cpp
 
 OBJDIR = obj
 
@@ -18,7 +18,7 @@ OBJET = $(addprefix $(OBJDIR)/, \
         IntMod.o Point.o SECP256K1.o KeyHunt.o GPU/GPUGenerate.o \
         hash/ripemd160.o hash/sha256.o hash/sha512.o \
         hash/ripemd160_sse.o hash/sha256_sse.o hash/keccak160.o \
-        GPU/GPUEngine.o GmpUtil.o CmdParse.o)
+        GPU/GPUEngine.o GmpUtil.o CmdParse.o MLFilter.o)
 
 else
 
@@ -27,7 +27,7 @@ OBJET = $(addprefix $(OBJDIR)/, \
         IntMod.o Point.o SECP256K1.o KeyHunt.o GPU/GPUGenerate.o \
         hash/ripemd160.o hash/sha256.o hash/sha512.o \
         hash/ripemd160_sse.o hash/sha256_sse.o hash/keccak160.o \
-        GmpUtil.o CmdParse.o)
+        GmpUtil.o CmdParse.o MLFilter.o)
 
 endif
 

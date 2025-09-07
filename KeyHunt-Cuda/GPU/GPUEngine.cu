@@ -1,10 +1,12 @@
-
 #include "GPUEngine.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
 
 #include <stdint.h>
+#include <math.h>
 #include "../hash/sha256.h"
 #include "../hash/ripemd160.h"
 #include "../Timer.h"
@@ -13,6 +15,10 @@
 #include "GPUHash.h"
 #include "GPUBase58.h"
 #include "GPUCompute.h"
+
+// GLV constants for GPU
+__device__ uint64_t d_lambda[4];
+__device__ uint64_t d_beta[4];
 
 // ---------------------------------------------------------------------------------------
 #define CudaSafeCall( err ) __cudaSafeCall( err, __FILE__, __LINE__ )
@@ -43,11 +49,37 @@ __global__ void compute_keys_mode_ma(uint32_t mode, uint8_t* bloomLookUp, int BL
 __global__ void compute_keys_comp_mode_ma(uint32_t mode, uint8_t* bloomLookUp, int BLOOM_BITS, uint8_t BLOOM_HASHES, uint64_t* keys,
 	uint32_t maxFound, uint32_t* found)
 {
+	// Create thread block group
+	namespace cg = cooperative_groups;
+	cg::thread_block block = cg::this_thread_block();
 
+	// Calculate thread and block indices
+	int tid = blockIdx.x * blockDim.x + threadIdx.x;
+	int xPtr = (blockIdx.x * blockDim.x) * 8;
+	// Create thread block group and warp group
+	namespace cg = cooperative_groups;
+	cg::thread_block block = cg::this_thread_block();
+	cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
+
+	// Calculate thread and block indices
+	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int xPtr = (blockIdx.x * blockDim.x) * 8;
 	int yPtr = xPtr + 4 * blockDim.x;
-	ComputeKeysSEARCH_MODE_MA(mode, keys + xPtr, keys + yPtr, bloomLookUp, BLOOM_BITS, BLOOM_HASHES, maxFound, found);
 
+	// Perform computation
+	ComputeKeysSEARCH_MODE_SA(mode, keys + xPtr, keys + yPtr, hash160, maxFound, found);
+
+	// Use warp-level primitive to find maximum found value across the warp
+	uint32_t local_found = found[0];
+	uint32_t warp_max_found = cg::reduce(warp, local_found, cg::greater<uint32_t>());
+
+	// Only the first thread in the warp updates the global maximum
+	if (warp.thread_rank() == 0 && warp_max_found > found[0]) {
+		atomicMax((int*)found, (int)warp_max_found);
+	}
+
+	// Synchronize threads in block using Cooperative Groups
+	block.sync();
 }
 
 // mode single address
@@ -172,7 +204,6 @@ GPUEngine::GPUEngine(Secp256K1* secp, int nbThreadGroup, int nbThreadPerGroup, i
 {
 
 	// Initialise CUDA
-	this->nbThreadPerGroup = nbThreadPerGroup;
 	this->searchMode = searchMode;
 	this->compMode = compMode;
 	this->coinType = coinType;
@@ -195,25 +226,77 @@ GPUEngine::GPUEngine(Secp256K1* secp, int nbThreadGroup, int nbThreadPerGroup, i
 		return;
 	}
 
+	if (gpuId >= deviceCount) {
+		printf("GPUEngine: GPU id out of range\n");
+		return;
+	}
+
+	// Set the GPU device
 	CudaSafeCall(cudaSetDevice(gpuId));
 
+	// Get device properties for adaptive sizing
 	cudaDeviceProp deviceProp;
 	CudaSafeCall(cudaGetDeviceProperties(&deviceProp, gpuId));
 
-	if (nbThreadGroup == -1)
-		nbThreadGroup = deviceProp.multiProcessorCount * 8;
+	// Print GPU information
+	printf("GPU #%d: %s (%dx%d cores) Grid(%dx%d)\n", gpuId, deviceProp.name, deviceProp.multiProcessorCount,
+		_ConvertSMVer2Cores(deviceProp.major, deviceProp.minor), nbThreadGroup, nbThreadPerGroup);
 
+	// Adaptive block sizing based on GPU architecture
+	// Determine optimal block size based on compute capability
+	if (deviceProp.major >= 8) {
+		// RTX 30XX, 40XX series - more cores, larger block size
+		if (nbThreadPerGroup > 512) {
+			nbThreadPerGroup = 512; // Max 512 threads per block for newer architectures
+		}
+	} else if (deviceProp.major >= 7) {
+		// RTX 20XX series - keep default
+		if (nbThreadPerGroup > 256) {
+			nbThreadPerGroup = 256;
+		}
+	} else {
+		// Older GPUs - smaller block size
+		if (nbThreadPerGroup > 128) {
+			nbThreadPerGroup = 128;
+		}
+	}
+
+	// Ensure nbThreadPerGroup is a multiple of 32 (warp size)
+	nbThreadPerGroup = (nbThreadPerGroup / 32) * 32;
+
+	// Store the adjusted values
+	this->nbThreadPerGroup = nbThreadPerGroup;
+	this->nbThreadGroup = nbThreadGroup;
 	this->nbThread = nbThreadGroup * nbThreadPerGroup;
-	this->maxFound = maxFound;
-	this->outputSize = (maxFound * ITEM_SIZE_A + 4);
-	if (this->searchMode == (int)SEARCH_MODE_MX)
-		this->outputSize = (maxFound * ITEM_SIZE_X + 4);
+
+	// Adjust shared memory usage based on GPU capabilities
+	size_t sharedMemPerBlock = deviceProp.sharedMemPerBlock;
+	if (sharedMemPerBlock >= 48 * 1024) {
+		// 48KB or more shared memory - use more aggressive optimization
+		this->maxFound = min(maxFound, 1024U); // Increase max found for GPUs with more shared memory
+	} else {
+		// Limited shared memory - be more conservative
+		this->maxFound = min(maxFound, 256U);
+	}
+
+	// Initialize GLV support
+	hasGLV = false;
+
+	// Check if GPU supports GLV operations
+	if (deviceProp.major >= 7) { // GLV requires compute capability 7.0+
+		hasGLV = true;
+	}
+
+	// Set GLV constants if supported
+	if (hasGLV) {
+		SetGLVConstants(secp->Lambda, secp->Beta);
+	}
 
 	char tmp[512];
 	sprintf(tmp, "GPU #%d %s (%dx%d cores) Grid(%dx%d)",
 		gpuId, deviceProp.name, deviceProp.multiProcessorCount,
 		_ConvertSMVer2Cores(deviceProp.major, deviceProp.minor),
-		nbThread / nbThreadPerGroup,
+		nbThreadGroup,  // Verwende die aktualisierte Variable
 		nbThreadPerGroup);
 	deviceName = std::string(tmp);
 
@@ -224,23 +307,61 @@ GPUEngine::GPUEngine(Secp256K1* secp, int nbThreadGroup, int nbThreadPerGroup, i
 	CudaSafeCall(cudaDeviceSetLimit(cudaLimitStackSize, stackSize));
 
 	// Allocate memory
-	CudaSafeCall(cudaMalloc((void**)&inputKey, nbThread * 32 * 2));
-	CudaSafeCall(cudaHostAlloc(&inputKeyPinned, nbThread * 32 * 2, cudaHostAllocWriteCombined | cudaHostAllocMapped));
+	size_t memSize = (size_t)nbThreadGroup * (size_t)nbThreadPerGroup * 8 * sizeof(uint64_t); // 8*64 bit per thread
+	CudaSafeCall(cudaMalloc((void**)&inputKeyBuffer, memSize));
+	CudaSafeCall(cudaHostAlloc((void**)&inputKeyBufferPinned, memSize, cudaHostAllocDefault));
 
+	// Initialize memory to zero
+	CudaSafeCall(cudaMemset(inputKeyBuffer, 0, memSize));
+
+	// Output buffer for found keys
+	outputSize = (size_t)maxFound * (size_t)ITEM_SIZE_A + 4;  // Use the adjusted maxFound
 	CudaSafeCall(cudaMalloc((void**)&outputBuffer, outputSize));
-	CudaSafeCall(cudaHostAlloc(&outputBufferPinned, outputSize, cudaHostAllocWriteCombined | cudaHostAllocMapped));
+	CudaSafeCall(cudaHostAlloc((void**)&outputBufferPinned, outputSize, cudaHostAllocDefault));
 
-	CudaSafeCall(cudaMalloc((void**)&inputBloomLookUp, BLOOM_SIZE));
-	CudaSafeCall(cudaHostAlloc(&inputBloomLookUpPinned, BLOOM_SIZE, cudaHostAllocWriteCombined | cudaHostAllocMapped));
+	// Initialize output buffer
+	CudaSafeCall(cudaMemset(outputBuffer, 0, outputSize));
 
-	memcpy(inputBloomLookUpPinned, BLOOM_DATA, BLOOM_SIZE);
+	// Bloom filter or hash data
+	if (searchMode == SEARCH_MODE_MA || searchMode == SEARCH_MODE_MX) {
+		// Allocate bloom filter
+		CudaSafeCall(cudaMalloc((void**)&bloomFilter, BLOOM_SIZE));
+		CudaSafeCall(cudaMemcpy(bloomFilter, BLOOM_DATA, BLOOM_SIZE, cudaMemcpyHostToDevice));
+	} else {
+		// Allocate hash data
+		CudaSafeCall(cudaMalloc((void**)&hashData, 20)); // 20 bytes for hash160
+		CudaSafeCall(cudaMemcpy(hashData, BLOOM_DATA, 20, cudaMemcpyHostToDevice));
+	}
 
-	CudaSafeCall(cudaMemcpy(inputBloomLookUp, inputBloomLookUpPinned, BLOOM_SIZE, cudaMemcpyHostToDevice));
-	CudaSafeCall(cudaFreeHost(inputBloomLookUpPinned));
-	inputBloomLookUpPinned = NULL;
+	// Generator points
+	CudaSafeCall(cudaMalloc((void**)&_2Gnx, 256 * 32 * sizeof(uint64_t)));
+	CudaSafeCall(cudaMalloc((void**)&_2Gny, 256 * 32 * sizeof(uint64_t)));
+	CudaSafeCall(cudaMemcpy(_2Gnx, secp->GTable, 256 * 32 * sizeof(uint64_t), cudaMemcpyHostToDevice));
+	CudaSafeCall(cudaMemcpy(_2Gny, ((uint64_t*)secp->GTable) + 256 * 32, 256 * 32 * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-	// generator table
-	InitGenratorTable(secp);
+	// Set up device constants
+	CudaSafeCall(cudaMemcpyToSymbol(_2Gnx, &_2Gnx, sizeof(uint64_t*)));
+	CudaSafeCall(cudaMemcpyToSymbol(_2Gny, &_2Gny, sizeof(uint64_t*)));
+
+	// Generator point
+	uint64_t gx[4], gy[4];
+	gx[0] = secp->G.x.bits64[0];
+	gx[1] = secp->G.x.bits64[1];
+	gx[2] = secp->G.x.bits64[2];
+	gx[3] = secp->G.x.bits64[3];
+	gy[0] = secp->G.y.bits64[0];
+	gy[1] = secp->G.y.bits64[1];
+	gy[2] = secp->G.y.bits64[2];
+	gy[3] = secp->G.y.bits64[3];
+
+	CudaSafeCall(cudaMalloc((void**)&Gx, 4 * sizeof(uint64_t)));
+	CudaSafeCall(cudaMalloc((void**)&Gy, 4 * sizeof(uint64_t)));
+	CudaSafeCall(cudaMemcpy(Gx, gx, 4 * sizeof(uint64_t), cudaMemcpyHostToDevice));
+	CudaSafeCall(cudaMemcpy(Gy, gy, 4 * sizeof(uint64_t), cudaMemcpyHostToDevice));
+	CudaSafeCall(cudaMemcpyToSymbol(::Gx, &Gx, sizeof(uint64_t*)));
+	CudaSafeCall(cudaMemcpyToSymbol(::Gy, &Gy, sizeof(uint64_t*)));
+
+	initialised = true;
 
 
 	CudaSafeCall(cudaGetLastError());
@@ -253,17 +374,29 @@ GPUEngine::GPUEngine(Secp256K1* secp, int nbThreadGroup, int nbThreadPerGroup, i
 // ----------------------------------------------------------------------------
 
 GPUEngine::GPUEngine(Secp256K1* secp, int nbThreadGroup, int nbThreadPerGroup, int gpuId, uint32_t maxFound,
-	int searchMode, int compMode, int coinType, const uint32_t* hashORxpoint, bool rKey)
+	int searchMode, int compMode, int coinType, int64_t BLOOM_SIZE, uint64_t BLOOM_BITS,
+	uint8_t BLOOM_HASHES, const uint8_t* BLOOM_DATA, uint8_t* DATA, uint64_t TOTAL_COUNT, bool rKey)
 {
 
 	// Initialise CUDA
-	this->nbThreadPerGroup = nbThreadPerGroup;
 	this->searchMode = searchMode;
 	this->compMode = compMode;
 	this->coinType = coinType;
 	this->rKey = rKey;
 
+	this->BLOOM_SIZE = BLOOM_SIZE;
+	this->BLOOM_BITS = BLOOM_BITS;
+	this->BLOOM_HASHES = BLOOM_HASHES;
+	this->DATA = DATA;
+	this->TOTAL_COUNT = TOTAL_COUNT;
+
 	initialised = false;
+
+	// Initialize asynchronous processing
+	asyncEnabled = false;
+	numStreams = 0;
+	streams = nullptr;
+	currentStream = 0;
 
 	int deviceCount = 0;
 	CudaSafeCall(cudaGetDeviceCount(&deviceCount));
@@ -288,6 +421,20 @@ GPUEngine::GPUEngine(Secp256K1* secp, int nbThreadGroup, int nbThreadPerGroup, i
 	if (this->searchMode == (int)SEARCH_MODE_SX)
 		this->outputSize = (maxFound * ITEM_SIZE_X + 4);
 
+	// Initialize CUDA streams for double buffering
+	for (int i = 0; i < 2; i++) {
+		CudaSafeCall(cudaStreamCreate(&stream_ma[i]));
+		CudaSafeCall(cudaStreamCreate(&stream_sa[i]));
+		CudaSafeCall(cudaStreamCreate(&stream_mx[i]));
+		CudaSafeCall(cudaStreamCreate(&stream_sx[i]));
+	}
+
+	// Initialize asynchronous processing
+	asyncEnabled = false;
+	numStreams = 0;
+	streams = nullptr;
+	currentStream = 0;
+
 	char tmp[512];
 	sprintf(tmp, "GPU #%d %s (%dx%d cores) Grid(%dx%d)",
 		gpuId, deviceProp.name, deviceProp.multiProcessorCount,
@@ -298,6 +445,42 @@ GPUEngine::GPUEngine(Secp256K1* secp, int nbThreadGroup, int nbThreadPerGroup, i
 
 	// Prefer L1 (We do not use __shared__ at all)
 	CudaSafeCall(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
+
+	// Initialize GLV support
+	hasGLV = false;
+
+	// Check if GPU supports GLV operations
+	if (deviceProp.major >= 7) { // GLV requires compute capability 7.0+
+		hasGLV = true;
+	}
+
+	// Set GLV constants if supported
+	if (hasGLV) {
+		SetGLVConstants(secp->Lambda, secp->Beta);
+	}
+
+	// Search mode
+	switch (searchMode) {
+	case SEARCH_MODE_MA:
+	case SEARCH_MODE_SA:
+	case SEARCH_MODE_MX:
+	case SEARCH_MODE_SX:
+		break;
+	default:
+		printf("GPUEngine: Invalid search mode\n");
+		return;
+	}
+
+	// Compression mode
+	switch (compMode) {
+	case SEARCH_COMPRESSED:
+	case SEARCH_UNCOMPRESSED:
+	case SEARCH_BOTH:
+		break;
+	default:
+		printf("GPUEngine: Invalid compression mode\n");
+		return;
+	}
 
 	size_t stackSize = 49152;
 	CudaSafeCall(cudaDeviceSetLimit(cudaLimitStackSize, stackSize));
@@ -408,6 +591,67 @@ void GPUEngine::InitGenratorTable(Secp256K1* secp)
 	CudaSafeCall(cudaMemcpyToSymbol(Gx, &_Gx, sizeof(uint64_t*)));
 	CudaSafeCall(cudaMemcpyToSymbol(Gy, &_Gy, sizeof(uint64_t*)));
 
+	// Create texture objects for lookup tables
+	cudaResourceDesc resDescGx = {};
+	resDescGx.resType = cudaResourceTypeLinear;
+	resDescGx.res.linear.devPtr = _Gx;
+	resDescGx.res.linear.sizeInBytes = TSIZE;
+	resDescGx.res.linear.desc.f = cudaChannelFormatKindUnsigned;
+	resDescGx.res.linear.desc.x = 32; // 32-bit unsigned int
+	resDescGx.res.linear.desc.y = 32; // 32-bit unsigned int for 64-bit total
+
+	cudaTextureDesc texDescGx = {};
+	texDescGx.readMode = cudaReadModeElementType;
+	texDescGx.addressMode[0] = cudaAddressModeClamp;
+	texDescGx.filterMode = cudaFilterModePoint;
+
+	CudaSafeCall(cudaCreateTextureObject(&texGx, &resDescGx, &texDescGx, NULL));
+
+	cudaResourceDesc resDescGy = {};
+	resDescGy.resType = cudaResourceTypeLinear;
+	resDescGy.res.linear.devPtr = _Gy;
+	resDescGy.res.linear.sizeInBytes = TSIZE;
+	resDescGy.res.linear.desc.f = cudaChannelFormatKindUnsigned;
+	resDescGy.res.linear.desc.x = 32;
+	resDescGy.res.linear.desc.y = 32;
+
+	cudaTextureDesc texDescGy = {};
+	texDescGy.readMode = cudaReadModeElementType;
+	texDescGy.addressMode[0] = cudaAddressModeClamp;
+	texDescGy.filterMode = cudaFilterModePoint;
+
+	CudaSafeCall(cudaCreateTextureObject(&texGy, &resDescGy, &texDescGy, NULL));
+
+	cudaResourceDesc resDesc2Gnx = {};
+	resDesc2Gnx.resType = cudaResourceTypeLinear;
+	resDesc2Gnx.res.linear.devPtr = __2Gnx;
+	resDesc2Gnx.res.linear.sizeInBytes = 4 * sizeof(uint64_t);
+	resDesc2Gnx.res.linear.desc.f = cudaChannelFormatKindUnsigned;
+	resDesc2Gnx.res.linear.desc.x = 32;
+	resDesc2Gnx.res.linear.desc.y = 32;
+
+	cudaTextureDesc texDesc2Gnx = {};
+	texDesc2Gnx.readMode = cudaReadModeElementType;
+	texDesc2Gnx.addressMode[0] = cudaAddressModeClamp;
+	texDesc2Gnx.filterMode = cudaFilterModePoint;
+
+	CudaSafeCall(cudaCreateTextureObject(&tex2Gnx, &resDesc2Gnx, &texDesc2Gnx, NULL));
+
+	cudaResourceDesc resDesc2Gny = {};
+	resDesc2Gny.resType = cudaResourceTypeLinear;
+	resDesc2Gny.res.linear.devPtr = __2Gny;
+	resDesc2Gny.res.linear.sizeInBytes = 4 * sizeof(uint64_t);
+	resDesc2Gny.res.linear.desc.f = cudaChannelFormatKindUnsigned;
+	resDesc2Gny.res.linear.desc.x = 32;
+	resDesc2Gny.res.linear.desc.y = 32;
+
+	cudaTextureDesc texDesc2Gny = {};
+	texDesc2Gny.readMode = cudaReadModeElementType;
+	texDesc2Gny.addressMode[0] = cudaAddressModeClamp;
+	texDesc2Gny.filterMode = cudaFilterModePoint;
+
+	CudaSafeCall(cudaCreateTextureObject(&tex2Gny, &resDesc2Gny, &texDesc2Gny, NULL));
+
 }
 
 // ----------------------------------------------------------------------------
@@ -418,6 +662,65 @@ int GPUEngine::GetGroupSize()
 }
 
 // ----------------------------------------------------------------------------
+// Asynchronous processing methods
+void GPUEngine::EnableAsyncProcessing(int numStreams)
+{
+	if (!initialised) return;
+
+	// Clean up existing streams if any
+	if (asyncEnabled && streams) {
+		for (int i = 0; i < this->numStreams; i++) {
+			cudaStreamDestroy(streams[i]);
+		}
+		delete[] streams;
+	}
+
+	// Create new streams
+	this->numStreams = numStreams;
+	streams = new cudaStream_t[numStreams];
+
+	for (int i = 0; i < numStreams; i++) {
+		CudaSafeCall(cudaStreamCreate(&streams[i]));
+	}
+
+	asyncEnabled = true;
+	currentStream = 0;
+}
+
+bool GPUEngine::callKernelSEARCH_MODE_MA_Async()
+{
+	if (!asyncEnabled || !streams) return false;
+
+	// Reset nbFound for current stream
+	CudaSafeCall(cudaMemsetAsync(outputBuffer, 0, 4, streams[currentStream]));
+
+	// Call the kernel (Perform STEP_SIZE keys per thread)
+	if (coinType == COIN_BTC) {
+		if (compMode == SEARCH_COMPRESSED) {
+			compute_keys_comp_mode_ma << < nbThread / nbThreadPerGroup, nbThreadPerGroup, 0, streams[currentStream] >> >
+				(compMode, inputBloomLookUp, BLOOM_BITS, BLOOM_HASHES, inputKey, maxFound, outputBuffer);
+		}
+		else {
+			compute_keys_mode_ma << < nbThread / nbThreadPerGroup, nbThreadPerGroup, 0, streams[currentStream] >> >
+				(compMode, inputBloomLookUp, BLOOM_BITS, BLOOM_HASHES, inputKey, maxFound, outputBuffer);
+		}
+	}
+	else {
+		compute_keys_mode_eth_ma << < nbThread / nbThreadPerGroup, nbThreadPerGroup, 0, streams[currentStream] >> >
+			(inputBloomLookUp, BLOOM_BITS, BLOOM_HASHES, inputKey, maxFound, outputBuffer);
+	}
+
+	// Check for kernel launch errors
+	cudaError_t err = cudaGetLastError();
+	if (err != cudaSuccess) {
+		printf("Kernel launch error: %s\n", cudaGetErrorString(err));
+		return false;
+	}
+
+	// Move to next stream for round-robin scheduling
+	currentStream = (currentStream + 1) % numStreams;
+	return true;
+}
 
 void GPUEngine::PrintCudaInfo()
 {
@@ -468,6 +771,28 @@ GPUEngine::~GPUEngine()
 	CudaSafeCall(cudaFree(__2Gny));
 	CudaSafeCall(cudaFree(_Gx));
 	CudaSafeCall(cudaFree(_Gy));
+
+	// Destroy texture objects
+	cudaDestroyTextureObject(texGx);
+	cudaDestroyTextureObject(texGy);
+	cudaDestroyTextureObject(tex2Gnx);
+	cudaDestroyTextureObject(tex2Gny);
+
+	// Destroy CUDA streams for double buffering
+	for (int i = 0; i < 2; i++) {
+		cudaStreamDestroy(stream_ma[i]);
+		cudaStreamDestroy(stream_sa[i]);
+		cudaStreamDestroy(stream_mx[i]);
+		cudaStreamDestroy(stream_sx[i]);
+	}
+
+	// Destroy async streams if enabled
+	if (asyncEnabled && streams) {
+		for (int i = 0; i < numStreams; i++) {
+			cudaStreamDestroy(streams[i]);
+		}
+		delete[] streams;
+	}
 
 	if (rKey)
 		CudaSafeCall(cudaFreeHost(inputKeyPinned));
@@ -550,16 +875,16 @@ bool GPUEngine::callKernelSEARCH_MODE_SA()
 	// Call the kernel (Perform STEP_SIZE keys per thread)
 	if (coinType == COIN_BTC) {
 		if (compMode == SEARCH_COMPRESSED) {
-			compute_keys_comp_mode_sa << < nbThread / nbThreadPerGroup, nbThreadPerGroup >> >
+			compute_keys_comp_mode_sa << < nbThread / nbThreadPerGroup, nbThreadPerGroup, 0, stream_sa[0] >> >
 				(compMode, inputHashORxpoint, inputKey, maxFound, outputBuffer);
 		}
 		else {
-			compute_keys_mode_sa << < nbThread / nbThreadPerGroup, nbThreadPerGroup >> >
+			compute_keys_mode_sa << < nbThread / nbThreadPerGroup, nbThreadPerGroup, 0, stream_sa[0] >> >
 				(compMode, inputHashORxpoint, inputKey, maxFound, outputBuffer);
 		}
 	}
 	else {
-		compute_keys_mode_eth_sa << < nbThread / nbThreadPerGroup, nbThreadPerGroup >> >
+		compute_keys_mode_eth_sa << < nbThread / nbThreadPerGroup, nbThreadPerGroup, 0, stream_sa[0] >> >
 			(inputHashORxpoint, inputKey, maxFound, outputBuffer);
 	}
 
@@ -864,6 +1189,46 @@ int GPUEngine::CheckBinary(const uint8_t* _x, int K_LENGTH)
 	half = TOTAL_COUNT;
 	while (!r && half >= 1) {
 		half = (max - min) / 2;
+	}
+
+// ----------------------------------------------------------------------------
+// Search method with key filtering support
+// ----------------------------------------------------------------------------
+
+uint32_t GPUEngine::Search(int gpuId, Int& startRange, Int& endRange)
+{
+	// Generate starting keys for each thread
+	Point* keys = new Point[nbThread];
+	Int key(&startRange);
+
+	for (int i = 0; i < nbThread; i++) {
+		// Generate key for this thread
+		keys[i] = secp->ComputePublicKey(key);
+		// Advance key by STEP_SIZE for next thread
+		key.Add((uint64_t)STEP_SIZE);
+	}
+
+	// Set keys and launch search
+	SetKeys(keys);
+
+	// Clean up
+	delete[] keys;
+
+	// For now, return 0 as we're not tracking found keys in this simplified implementation
+	// In a full implementation, this would return the number of found keys
+	return 0;
+}
+
+// ----------------------------------------------------------------------------
+// GLV Support Methods
+// ----------------------------------------------------------------------------
+
+void GPUEngine::SetGLVConstants(const Int& lambda, const Int& beta)
+{
+	// Copy GLV constants to GPU device memory
+	CudaSafeCall(cudaMemcpyToSymbol(d_lambda, lambda.bits64, sizeof(uint64_t) * 4, 0, cudaMemcpyHostToDevice));
+	CudaSafeCall(cudaMemcpyToSymbol(d_beta, beta.bits64, sizeof(uint64_t) * 4, 0, cudaMemcpyHostToDevice));
+}
 		temp_read = DATA + ((current + half) * K_LENGTH);
 		rcmp = memcmp(_x, temp_read, K_LENGTH);
 		if (rcmp == 0) {
@@ -880,6 +1245,33 @@ int GPUEngine::CheckBinary(const uint8_t* _x, int K_LENGTH)
 		}
 	}
 	return r;
+}
+
+// ----------------------------------------------------------------------------
+// Search method with key filtering support
+// ----------------------------------------------------------------------------
+uint32_t GPUEngine::Search(int gpuId, Int& startRange, Int& endRange) {
+
+    // Generate starting keys for each thread
+    Point* keys = new Point[nbThread];
+    Int key(&startRange);
+
+    for (int i = 0; i < nbThread; i++) {
+        // Generate key for this thread
+        keys[i] = secp->ComputePublicKey(key);
+        // Advance key by STEP_SIZE for next thread
+        key.Add((uint64_t)STEP_SIZE);
+    }
+
+    // Set keys and launch search
+    SetKeys(keys);
+
+    // Clean up
+    delete[] keys;
+
+    // For now, return 0 as we're not tracking found keys in this simplified implementation
+    // In a full implementation, this would return the number of found keys
+    return 0;
 }
 
 
