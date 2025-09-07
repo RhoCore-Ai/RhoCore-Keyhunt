@@ -61,7 +61,7 @@ void CheckAddress(Secp256K1* T, std::string address, std::string privKeyStr)
 	bool isCompressed;
 
 	Int privKey = T->DecodePrivateKey((char*)privKeyStr.c_str(), &isCompressed);
-	Point pub = T->ComputePublicKey(&privKey);
+	Point pub = T->ComputePublicKey(privKey);
 
 	std::string calcAddress = T->GetAddress(isCompressed, pub);
 
@@ -106,7 +106,7 @@ void Secp256K1::Check()
 	printf("Check GenKey :");
 	Int privKey;
 	privKey.SetBase16("46b9e861b63d3509c88b7817275a30d22d62c8cd8fa6486ddee35ef0d8e0495f");
-	Point pub = ComputePublicKey(&privKey);
+	Point pub = ComputePublicKey(privKey);
 	Point expectedPubKey;
 	expectedPubKey.x.SetBase16("2500e7f3fbddf2842903f544ddc87494ce95029ace4e257d54ba77f2bc1f3a88");
 	expectedPubKey.y.SetBase16("37a9461c4f1c57fecc499753381e772a128a5820a924a2fa05162eb662987a9f");
@@ -138,7 +138,7 @@ void Secp256K1::Check()
 }
 
 
-Point Secp256K1::ComputePublicKey(Int* privKey)
+Point Secp256K1::ComputePublicKey(const Int& privKey)
 {
 
 	int i = 0;
@@ -148,7 +148,7 @@ Point Secp256K1::ComputePublicKey(Int* privKey)
 
 	// Search first significant byte
 	for (i = 0; i < 32; i++) {
-		b = privKey->GetByte(i);
+		b = privKey.GetByte(i);
 		if (b)
 			break;
 	}
@@ -156,7 +156,7 @@ Point Secp256K1::ComputePublicKey(Int* privKey)
 	i++;
 
 	for (; i < 32; i++) {
-		b = privKey->GetByte(i);
+		b = privKey.GetByte(i);
 		if (b)
 			Q = Add2(Q, GTable[256 * i + (b - 1)]);
 	}
@@ -372,7 +372,7 @@ uint8_t Secp256K1::GetByte(std::string& str, int idx)
 {
 
 	char tmp[3];
-	int  val;
+	int val;
 
 	tmp[0] = str.data()[2 * idx];
 	tmp[1] = str.data()[2 * idx + 1];

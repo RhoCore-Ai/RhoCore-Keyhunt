@@ -20,10 +20,11 @@
 
 #include "Point.h"
 #include "Int.h"
-// Forward declaration instead of including GPUEngine.h to avoid circular dependency
-class GPUEngine;
 #include <string>
 #include <vector>
+
+// Forward declaration instead of including GPUEngine.h to avoid circular dependency
+class GPUEngine;
 
 // Secp256K1 curve parameters
 #define SECP256K1_P "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F"
@@ -188,6 +189,31 @@ public:
 	Point ParsePubKeyBIP39BIP174(const std::string& str);
 	Point ParsePubKeyBIP39BIP175(const std::string& str);
 	Point ParsePubKeyBIP39BIP32(const std::string& str);
+
+	// Added missing function declarations
+	Int DecodePrivateKey(char* key, bool* compressed);
+	std::string GetAddress(bool compressed, Point& pubKey);
+	std::vector<std::string> GetAddress(bool compressed, unsigned char* h1, unsigned char* h2, unsigned char* h3, unsigned char* h4);
+	std::string GetAddress(bool compressed, unsigned char* hash160);
+	bool EC(Point& p);
+	Point Double(Point& p);
+	Point Add(Point& p1, Point& p2);
+	Int GetY(Int x, bool isEven);
+	Point NextKey(Point& key);
+	void GetHash160(bool compressed, Point& k0, Point& k1, Point& k2, Point& k3, uint8_t* h0, uint8_t* h1, uint8_t* h2, uint8_t* h3);
+	uint8_t GetByte(std::string& str, int idx);
+	Point ParsePublicKeyHex(std::string str, bool& isCompressed);
+	std::string GetPublicKeyHex(bool compressed, Point& pubKey);
+	std::string GetPublicKeyHexETH(Point& pubKey);
+	void GetPubKeyBytes(bool compressed, Point& pubKey, unsigned char* publicKeyBytes);
+	void GetXBytes(bool compressed, Point& pubKey, unsigned char* publicKeyBytes);
+	void GetHash160(bool compressed, Point& pubKey, unsigned char* hash);
+	void GetHashETH(Point& pubKey, unsigned char* hash);
+	std::string GetPrivAddress(bool compressed, Int& privKey);
+	std::string GetAddressETH(unsigned char* hash);
+	std::string GetAddressETH(Point& pubKey);
+	bool CheckPudAddress(std::string address);
+	Point Add2(Point& p1, Point& p2);
 	
 	// Curve parameters
 	Int P;			// Prime modulus
@@ -197,6 +223,10 @@ public:
 	Point G;		// Generator point
 	Int Gy;			// Generator y coordinate
 	Int Gx;			// Generator x coordinate
+
+	// Added missing variable declarations
+	Int order;
+	Point GTable[256 * 32];
 	
 	// GPU engine
 	GPUEngine* gpuEngine;
