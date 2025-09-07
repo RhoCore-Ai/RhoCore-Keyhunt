@@ -165,7 +165,7 @@ public:
 	// Getter
 	uint32_t GetInt32();
 	int GetBit(uint32_t n);
-	unsigned char GetByte(int n);
+	unsigned char GetByte(int n) const;
 	void Get32Bytes(unsigned char* buff);
 
 	// To String

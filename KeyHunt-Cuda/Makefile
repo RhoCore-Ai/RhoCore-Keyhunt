@@ -1,7 +1,3 @@
-# ---------------------------------------------------------------------
-# Makefile for KeyHunt
-#
-# Author : Jean-Luc PONS
 
 SRC = Base58.cpp IntGroup.cpp Main.cpp Bloom.cpp Random.cpp \
       Timer.cpp Int.cpp IntMod.cpp Point.cpp SECP256K1.cpp \
@@ -11,31 +7,27 @@ SRC = Base58.cpp IntGroup.cpp Main.cpp Bloom.cpp Random.cpp \
 
 OBJDIR = obj
 
+# Gemeinsame Objektdateien für alle Builds
+COMMON_OBJ = $(addprefix $(OBJDIR)/, \
+             Base58.o IntGroup.o Main.o Bloom.o Random.o Timer.o Int.o \
+             IntMod.o Point.o SECP256K1.o KeyHunt.o GPU/GPUGenerate.o \
+             hash/ripemd160.o hash/sha256.o hash/sha512.o \
+             hash/ripemd160_sse.o hash/sha256_sse.o hash/keccak160.o \
+             GmpUtil.o CmdParse.o MLFilter.o)
+
+# Finale Liste der Objektdateien
+OBJET = $(COMMON_OBJ)
+
+# Füge GPU-spezifische Objekte nur hinzu, wenn 'gpu' definiert ist
 ifdef gpu
-
-OBJET = $(addprefix $(OBJDIR)/, \
-        Base58.o IntGroup.o Main.o Bloom.o Random.o Timer.o Int.o \
-        IntMod.o Point.o SECP256K1.o KeyHunt.o GPU/GPUGenerate.o \
-        hash/ripemd160.o hash/sha256.o hash/sha512.o \
-        hash/ripemd160_sse.o hash/sha256_sse.o hash/keccak160.o \
-        GPU/GPUEngine.o GmpUtil.o CmdParse.o MLFilter.o)
-
-else
-
-OBJET = $(addprefix $(OBJDIR)/, \
-        Base58.o IntGroup.o Main.o Bloom.o Random.o Timer.o Int.o \
-        IntMod.o Point.o SECP256K1.o KeyHunt.o GPU/GPUGenerate.o \
-        hash/ripemd160.o hash/sha256.o hash/sha512.o \
-        hash/ripemd160_sse.o hash/sha256_sse.o hash/keccak160.o \
-        GmpUtil.o CmdParse.o MLFilter.o)
-
+  OBJET += $(OBJDIR)/GPU/GPUEngine.o
 endif
 
 CXX        = g++
 CUDA       = /usr/local/cuda
 CXXCUDA    = /usr/bin/g++
 NVCC       = $(CUDA)/bin/nvcc
-# nvcc requires joint notation w/o dot, i.e. "5.2" -> "52"
+# nvcc benötigt die Compute Capability ohne Punkt, z.B. "8.6" -> "86"
 ccap       = $(shell echo $(CCAP) | tr -d '.')
 
 ifdef gpu
