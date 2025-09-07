@@ -18,9 +18,15 @@
 #ifndef GPUENGINEH
 #define GPUENGINEH
 
+#ifdef WITHGPU
+#include <cuda_runtime.h>
+#endif
+
 #include <vector>
-#include "GPU/GPUEngine.h"
-#include "../SECP256k1.h"
+// Forward declaration instead of including the header to avoid circular dependency
+class Secp256K1;
+#include "../Point.h"
+#include "../Int.h"
 
 // For 64bits key
 #define GPU_GRP_SIZE 256

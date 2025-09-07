@@ -20,7 +20,8 @@
 
 #include "Point.h"
 #include "Int.h"
-#include "GPU/GPUEngine.h"
+// Forward declaration instead of including GPUEngine.h to avoid circular dependency
+class GPUEngine;
 #include <string>
 #include <vector>
 
