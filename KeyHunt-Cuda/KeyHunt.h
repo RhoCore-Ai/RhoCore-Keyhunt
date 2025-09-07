@@ -1,150 +1,75 @@
-#ifndef KEYHUNTH
-#define KEYHUNTH
+#ifndef KEYHUNT_H
+#define KEYHUNT_H
 
 #include <string>
 #include <vector>
+#include <stdint.h>
+#include "Int.h"
+#include "Point.h"
 #include "SECP256k1.h"
 #include "Bloom.h"
-#include "GPU/GPUEngine.h"
 #include "MLFilter.h"
-#ifdef WIN64
-#include <Windows.h>
-#endif
 
-// Coin type definitions
-#define COIN_BTC 0
-#define COIN_ETH 1
-
-// Search mode definitions (already defined in GPUEngine.h)
-// #define SEARCH_MODE_MA 0
-// #define SEARCH_MODE_SA 1
-// #define SEARCH_MODE_MX 2
-// #define SEARCH_MODE_SX 3
-
-// Compression mode definitions (already defined in GPUEngine.h)
-// #define SEARCH_COMPRESSED 0
-// #define SEARCH_UNCOMPRESSED 1
-// #define SEARCH_BOTH 2
-
-#define CPU_GRP_SIZE (1024*2)
-
-class KeyHunt;
-
+// Struktur zur Speicherung von Hash-Werten
 typedef struct {
-	KeyHunt* obj;
-	int  threadId;
-	bool isRunning;
-	bool hasStarted;
+    unsigned char hash[20];
+} HASH160;
 
-	int  gridSizeX;
-	int  gridSizeY;
-	int  gpuId;
+// Struktur zur Speicherung von Suchergebnissen
+typedef struct {
+    bool compressed;
+    Point publicKey;
+    Int privateKey;
+} KEYSEARCHRESULT;
 
-	Int rangeStart;
-	Int rangeEnd;
-	bool rKeyRequest;
-} TH_PARAM;
+// Struktur zur Definition von Suchbereichen für Threads
+typedef struct {
+    Int start;
+    Int end;
+    double speed;
+    uint64_t total;
+    int threadId;
+    int deviceId;
+} THREADRANGE;
 
-
-class KeyHunt
-{
-
+class KeyHunt {
 public:
+    KeyHunt(const std::string& target, int mode, int coin, int range, bool useGpu, const std::string& inputFile, bool useBloom, uint32_t bloomFilterSize, uint64_t bloomFilterNum, const std::string& rangeStart, const std::string& rangeEnd, bool& success);
+    ~KeyHunt();
 
-	KeyHunt(const std::string& inputFile, int compMode, int searchMode, int coinType, bool useGpu, 
-		const std::string& outputFile, bool useSSE, uint32_t maxFound, uint64_t rKey, 
-		const std::string& rangeStart, const std::string& rangeEnd, bool& should_exit);
-
-	KeyHunt(const std::vector<unsigned char>& hashORxpoint, int compMode, int searchMode, int coinType, 
-		bool useGpu, const std::string& outputFile, bool useSSE, uint32_t maxFound, uint64_t rKey, 
-		const std::string& rangeStart, const std::string& rangeEnd, bool& should_exit);
-
-	~KeyHunt();
-
-	void Search(int nbThread, std::vector<int> gpuId, std::vector<int> gridSize, bool& should_exit);
-	void FindKeyCPU(TH_PARAM* p);
-	void FindKeyGPU(TH_PARAM* p);
-
+    void Search();
+    void GetFinalResult(std::vector<KEYSEARCHRESULT>& results);
 
 private:
+    // Klassenvariablen
+    int searchMode;
+    int coinType;
+    int compression;
+    bool useGpu;
+    bool useBloomFilter;
+    bool useMLFilter;
+    Int rangeStart;
+    Int rangeEnd;
+    Secp256K1* secp;
+    Bloom* bloom;
+    MLFilter* mlFilter;
+    uint64_t totalKeys;
+    uint64_t totalChecks;
+    time_t startTime;
+    time_t endTime;
+    std::vector<KEYSEARCHRESULT> finalResult;
+    std::vector<THREADRANGE> threadRanges;
+    std::vector<HASH160> TARGET_HASH;
+    uint64_t ITEM_COUNT;
 
-	void InitGenratorTable();
-
-	std::string GetHex(std::vector<unsigned char>& buffer);
-	bool checkPrivKey(std::string addr, Int& key, int32_t incr, bool mode);
-	bool checkPrivKeyETH(std::string addr, Int& key, int32_t incr);
-	bool checkPrivKeyX(Int& key, int32_t incr, bool mode);
-
-	void checkMultiAddresses(bool compressed, Int key, int i, Point p1);
-	void checkMultiAddressesETH(Int key, int i, Point p1);
-	void checkSingleAddress(bool compressed, Int key, int i, Point p1);
-	void checkSingleAddressETH(Int key, int i, Point p1);
-	void checkMultiXPoints(bool compressed, Int key, int i, Point p1);
-	void checkSingleXPoint(bool compressed, Int key, int i, Point p1);
-
-	void checkMultiAddressesSSE(bool compressed, Int key, int i, Point p1, Point p2, Point p3, Point p4);
-	void checkSingleAddressesSSE(bool compressed, Int key, int i, Point p1, Point p2, Point p3, Point p4);
-
-	void output(std::string addr, std::string pAddr, std::string pAddrHex, std::string pubKey);
-	bool isAlive(TH_PARAM* p);
-
-	bool hasStarted(TH_PARAM* p);
-	uint64_t getGPUCount();
-	uint64_t getCPUCount();
-	void rKeyRequest(TH_PARAM* p);
-	void SetupRanges(uint32_t totalThreads);
-
-	void getCPUStartingKey(Int& tRangeStart, Int& tRangeEnd, Int& key, Point& startP);
-	void getGPUStartingKeys(Int& tRangeStart, Int& tRangeEnd, int groupSize, int nbThread, Int* keys, Point* p);
-
-	int CheckBloomBinary(const uint8_t* _xx, uint32_t K_LENGTH);
-	bool MatchHash(uint32_t* _h);
-	bool MatchXPoint(uint32_t* _h);
-	std::string formatThousands(uint64_t x);
-	char* toTimeStr(int sec, char* timeStr);
-
-	Secp256K1* secp;
-	Bloom* bloom;
-
-	uint64_t counters[256];
-	double startTime;
-
-	int compMode;
-	int searchMode;
-	int coinType;
-
-	bool useGpu;
-	bool endOfSearch;
-	int nbCPUThread;
-	int nbGPUThread;
-	int nbFoundKey;
-	uint64_t targetCounter;
-
-	std::string outputFile;
-	std::string inputFile;
-	uint32_t hash160Keccak[5];
-	uint32_t xpoint[8];
-	bool useSSE;
-
-	Int rangeStart;
-	Int rangeEnd;
-	Int rangeDiff;
-	Int rangeDiff2;
-
-	uint32_t maxFound;
-	uint64_t rKey;
-	uint64_t lastrKey;
-
-	uint8_t* DATA;
-	uint64_t TOTAL_COUNT;
-	uint64_t BLOOM_N;
-
-#ifdef WIN64
-	HANDLE ghMutex;
-#else
-	pthread_mutex_t  ghMutex;
-#endif
-
+    // Methoden
+    bool isKeyFiltered(Int& key);
+    void SetupRanges(uint32_t numThreads);
+    void FindKeyCPUThread(void* param);
+    static void* _FindKeyCPUThread(void* lpParam);
+    void CheckAddresses(bool compressed, Int key, uint32_t* found);
+    bool CheckAddress(const uint8_t* hash160, bool compressed, Int& key, uint32_t* found);
+    void OutputFound(const KEYSEARCHRESULT& result);
 };
 
-#endif // KEYHUNTH
+#endif // KEYHUNT_H

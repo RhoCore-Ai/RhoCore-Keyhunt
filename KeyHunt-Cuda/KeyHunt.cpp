@@ -230,7 +230,7 @@ KeyHunt::KeyHunt(const std::string& inputFile, int compMode, int searchMode, int
 
 	// Init bloom
 	if (this->searchMode == SEARCH_MODE_MA || this->searchMode == SEARCH_MODE_MX) {
-		bloom.Init(this->TARGET_HASH);
+		bloom->Init(this->TARGET_HASH);
 	}
 
 	// Display info
@@ -455,17 +455,25 @@ void KeyHunt::SetupRanges(uint32_t totalThreads)
 	Int rangeTotal(&this->rangeDiff2);
 	rangeTotal.AddOne();
 
-	Int rangeDiv = rangeTotal.Div(totalThreads);
-	Int rangeMod = rangeTotal.Mod(totalThreads);
+	Int divInt(totalThreads);
+    Int modInt;
+    rangeTotal.Div(&divInt, &modInt);
+    Int rangeDiv = rangeTotal;
+    Int rangeMod = modInt;
 
 	// Setup ranges
 	this->threadRanges.resize(totalThreads);
 	for (uint32_t i = 0; i < totalThreads; i++) {
-		this->threadRanges[i].start.Set(&this->rangeStart);
-		this->threadRanges[i].start.Add(&rangeDiv.Mult(i));
-		if (i < (uint32_t)rangeMod.GetInt32()) {
-			this->threadRanges[i].start.Add((uint64_t)(i + 1));
-		}
+    this->threadRanges[i].start.Set(&this->rangeStart);
+
+    // --- START DER ÄNDERUNG ---
+    Int tmp = rangeDiv.Mult(i);
+    this->threadRanges[i].start.Add(&tmp);
+    // --- ENDE DER ÄNDERUNG ---
+
+    if (i < (uint32_t)rangeMod.GetInt32()) {
+        this->threadRanges[i].start.Add((uint64_t)(i + 1));
+    }
 		else {
 			this->threadRanges[i].start.Add((uint64_t)rangeMod.GetInt32());
 		}
