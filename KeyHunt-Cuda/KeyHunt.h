@@ -11,6 +11,21 @@
 #include <Windows.h>
 #endif
 
+// Coin type definitions
+#define COIN_BTC 0
+#define COIN_ETH 1
+
+// Search mode definitions (already defined in GPUEngine.h)
+// #define SEARCH_MODE_MA 0
+// #define SEARCH_MODE_SA 1
+// #define SEARCH_MODE_MX 2
+// #define SEARCH_MODE_SX 3
+
+// Compression mode definitions (already defined in GPUEngine.h)
+// #define SEARCH_COMPRESSED 0
+// #define SEARCH_UNCOMPRESSED 1
+// #define SEARCH_BOTH 2
+
 #define CPU_GRP_SIZE (1024*2)
 
 class KeyHunt;

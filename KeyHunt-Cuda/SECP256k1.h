@@ -48,7 +48,8 @@ public:
 	Secp256K1();
 	~Secp256K1();
 	void Init();
-	
+	void Check(); // Hinzugefügt für Kompilierbarkeit
+
 	// GLV Method functions
 	void SplitScalar(const Int& k, Int& k1, Int& k2);
 	Point MulGLV(const Point& P, const Int& k);

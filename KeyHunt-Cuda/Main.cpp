@@ -525,7 +525,7 @@ int main(int argc, char** argv)
 			printf("\n");
 	}
 	printf("SSE          : %s\n", useSSE ? "YES" : "NO");
-	printf("RKEY         : %llu Mkeys\n", rKey);
+	printf("RKEY         : %lu Mkeys\n", rKey);
 	printf("MAX FOUND    : %d\n", maxFound);
 	if (coinType == COIN_BTC) {
 		switch (searchMode) {
